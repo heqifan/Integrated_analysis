@@ -31,7 +31,7 @@ from sklearn.metrics import mean_squared_error
 from sklearn.metrics import r2_score
 print("mean_absolute_error:", mean_absolute_error(y_test, y_predict))
 print("mean_squared_error:", mean_squared_error(y_test, y_predict))
-print("rmse:", sqrt(mean_squared_error(y_test, y_predict)))
+print("rmse:", sqrt(mean_squared_error(y_test, y_predict))) 
 print("r2 score:", r2_score(y_test, y_predict))
 
 #原生实现
