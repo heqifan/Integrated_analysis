@@ -113,8 +113,6 @@ def normalization(Datas):
         for da in data:
             max_value = np.nanmax(da)
             min_value = np.nanmin(da)
-            # print('max_value',max_value)
-            # print('min_value',min_value)
             da = (da-min_value)/(max_value-min_value)
             data_.append(da)
         datas_.append(data_)
@@ -122,7 +120,7 @@ def normalization(Datas):
 
     
 '''Write'''
-def WriteArray(datalist,Outpath,Name):
+def WriteArray(datalist,Name):
     sample_tif = r'F:\Integrated_analysis_data\Data\Sample\Reproject_Mul_2002.tif'                          # 需要读取的tif文件所在的文件夹的所在文件夹的路径    
     ds = gdal.Open(sample_tif)                             # 打开文件
     im_width = minx_minx                          # 获取栅格矩阵的列数
@@ -139,7 +137,7 @@ def WriteArray(datalist,Outpath,Name):
         os.makedirs(outdir)
     for j in range(0,len(datalist)):    
         out_ds = gdal.GetDriverByName('GTiff').Create(
-              outdir + os.sep + var[j] + '.tif',                   # tif文件所保存的路径
+              outdir + os.sep + Name + "_" + str(var[j]) + '.tif',                   # tif文件所保存的路径
               im_width,                                     # 获取栅格矩阵的列数
               im_height,                                     # 获取栅格矩阵的行数
               ds.RasterCount,                                     # 获取栅格矩阵的波段数
@@ -150,30 +148,55 @@ def WriteArray(datalist,Outpath,Name):
         out_band.WriteArray(np.array(datalist[j]).reshape(miny_miny,minx_minx))    # 写入数据 (why)
         out_ds.FlushCache()  #(刷新缓存)
         del out_ds #删除 
-        logging.info(f' {outdir + os.sep + var[j] + ".tif"} is  ok   !!!!!!!!')
+        logging.info(f' {outdir + os.sep + Name + "_" + str(var[j]) + ".tif"} is  ok   !!!!!!!!')
+    del ds    
+def WriteArray_year(datalist,Name):
+    sample_tif = r'F:\Integrated_analysis_data\Data\Sample\Reproject_Mul_2002.tif'                          # 需要读取的tif文件所在的文件夹的所在文件夹的路径    
+    ds = gdal.Open(sample_tif)                             # 打开文件
+    im_width = minx_minx                          # 获取栅格矩阵的列数
+    logging.info(f'im_width: {im_width}')
+    im_height = miny_miny                         # 获取栅格矩阵的行数
+    logging.info(f'im_height: {im_height}')
+    # im_bands = ds.RasterCount                     # 获取栅格矩阵的波段数
+    #print(f'im_bands: {im_bands}')
+    # band1 = ds.GetRasterBand(1)                         # 波段的indice起始为1，不为0
+    img_datatype = gdal.GDT_Float32                       # 数据类型
+    outdir = Outpath + os.sep + Name
+    logging.info(f'-------输出文件夹为 {outdir}---------')
+    if not os.path.exists(outdir):       #判断原始文件路劲是否存在,如果不存在就直接退出
+        os.makedirs(outdir)
+    for j in range(0,len(datalist)):    
+        out_ds = gdal.GetDriverByName('GTiff').Create(
+              outdir + os.sep + Name + "_" + str(years[j]) + '.tif',                   # tif文件所保存的路径
+              im_width,                                     # 获取栅格矩阵的列数
+              im_height,                                     # 获取栅格矩阵的行数
+              ds.RasterCount,                                     # 获取栅格矩阵的波段数
+              img_datatype)                                       # 获取第一波段的数据类型
+        out_ds.SetProjection(ds.GetProjection())                # 投影信息
+        out_ds.SetGeoTransform(ds.GetGeoTransform())            # 仿射信息
+        out_band = out_ds.GetRasterBand(1)
+        out_band.WriteArray(np.array(datalist[j]).reshape(miny_miny,minx_minx))    # 写入数据 (why)
+        out_ds.FlushCache()  #(刷新缓存)
+        del out_ds #删除 
+        logging.info(f' {outdir + os.sep + Name + "_" + str(years[j]) + ".tif"} is  ok   !!!!!!!!')
     del ds 
-    
-def WriteArray_RR(images_pixels,Outpath,type_,y_datas):
+def WriteArray_RR(images_pixels,type_,y_datas):
     images_list = np.array(images_pixels).T.tolist()
     y_list = np.array(y_datas).T.tolist()
     mean_results = []
-    for images,y in tqdm(zip(images_list,y_list)):
+    for images,y in tqdm(zip(images_list,y_list),desc = type_):
         result = RR_LinearRegression(images,y)
         mean_results.append(result)
-    mean_results = pd.DataFrame(mean_results)
-    datalist = [mean_results.iloc[:,0],mean_results.iloc[:,1],mean_results.iloc[:,2],mean_results.iloc[:,3]]
-    WriteArray(datalist,Outpath,type_)
-    
-def WriteArray_R2(images_pixels,Outpath,type_,y_datas):
+    mean_results = np.array(mean_results)
+    WriteArray([mean_results[:,0],mean_results[:,1],mean_results[:,2],mean_results[:,3]],type_)        
+def WriteArray_R2(images_pixels,y_datas,type_):
     # logging.info(f'整理好的二维列表的行数为：{len(images_list)},列数为：{len(images_list[0])}')
     mean_results = []
-    for images,y in zip(np.array(images_pixels).T.tolist(),np.array(y_datas).T.tolist()):
+    for images,y in tqdm(zip(np.array(images_pixels).T.tolist(),np.array(y_datas).T.tolist()),desc= type_):
         result = R2_LinearRegression(images,y)
         mean_results.append(result)
-    WriteArray([pd.DataFrame(mean_results).iloc[:,0]],Outpath,type_) 
-
-
-# def WriteArray_RR_RF(images_pixels,Outpath,type_):
+    WriteArray([pd.DataFrame(mean_results).iloc[:,0]],type_) 
+# def RR_RF(images_pixels,Outpath,type_):
 #     images_list = np.array(images_pixels).T.tolist()
 #     mean_results = []
 #     for images in tqdm(images_list):
@@ -181,7 +204,7 @@ def WriteArray_R2(images_pixels,Outpath,type_,y_datas):
 #         mean_results.append(result)
 #     mean_results = pd.DataFrame(mean_results)
 #     datalist = [mean_results.iloc[:,0],mean_results.iloc[:,1],mean_results.iloc[:,2],mean_results.iloc[:,3]]
-#     WriteArray(datalist,Outpath,type_)
+#     WriteArray(datalist,type_)
 
 def RR_Multiply_Regression(mean_data,y_data):
     if np.isnan(np.array(mean_data)).any() or np.isnan(np.array(y_data)).any():
@@ -193,14 +216,13 @@ def RR_Multiply_Regression(mean_data,y_data):
     mse =  mean_squared_error(np.array(y_data).reshape(-1, 1), y_predict)
     mae = mean_absolute_error(np.array(y_data).reshape(-1, 1), y_predict)
     rmse = sqrt(mse) 
-    print('r2:   ',r2)
+    # print('r2:   ',r2)
     # print(na_me[np.argsort(model.coef_)])  #输出各个特征按照影响系数从小到大的顺序
     return [r2,rmse,mse,mae]
 
 def R2_LinearRegression(mean_data,y_data):
     start = datetime.datetime.now()
     model = linear_model.LinearRegression()
-    # print(len(np.array(mean_data)[~np.isnan(np.array(mean_data))]))
     if np.isnan(np.array(mean_data)).any() or np.isnan(np.array(y_data)).any():
         return [np.nan]
     model.fit(np.array(mean_data).reshape(-1, 1), np.array(y_data).reshape(-1, 1))
@@ -228,7 +250,7 @@ def RR_LinearRegression(mean_data,y_data):
 def Cal_R2(Setnodata_datas):
     start = datetime.datetime.now()
     for name,da in tqdm(enumerate(Setnodata_datas[:-1]),desc = 'Cal_R2'):
-        images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
+        images_pixels1 = [] 
         images_pixels5 = []
         for year in tqdm(range(len(years)),desc = 'Year'):
             images_pixels3 = []
@@ -239,26 +261,25 @@ def Cal_R2(Setnodata_datas):
                     images_pixels6.append(Setnodata_datas[-1][year][y][x])
             images_pixels1.append(images_pixels3)
             images_pixels5.append(images_pixels6)
-        WriteArray_R2(images_pixels1,Outpath,'R2_' + na_me[name],images_pixels5)
+        WriteArray_R2(images_pixels1,images_pixels5,'R2_' + na_me[name])
         sg.popup_notify(f'R2_{na_me[name]}  Task done!!!! Spend-time: {datetime.datetime.now()-start}')
     end = datetime.datetime.now()
     sg.popup_notify(f' Cal_R2     ALL  Task done!!!! Spend-time: {end-start}')
     
     
 '''total'''
-def Mean_Median(Setnodata_datas):
+def Mean_Median(Setnodata_datas,nn_mean,nn_median):
     print('——————————————Mean,Median——————————————————')
     start = datetime.datetime.now()
-    images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
+    images_pixels1 = []  
     images_pixels2 = []
     images_pixels5 = []
-    for year in tqdm(range(len(years)),desc = 'Year'):
+    for year in tqdm(range(len(years)),desc = 'Mean,Median'):
         images_pixels3 = []
         images_pixels4 = []
         images_pixels6 = []
         for y in range(miny_miny):
             for x in range(minx_minx):
-                # a = np.array([Setnodata_datas[0][year][y][x] , Setnodata_datas[1][year][y][x], Setnodata_datas[2][year][y][x] , Setnodata_datas[3][year][y][x]])
                 a = np.array([Setnodata_datas[0][year][y][x] , Setnodata_datas[1][year][y][x], Setnodata_datas[2][year][y][x] , Setnodata_datas[3][year][y][x],Setnodata_datas[4][year][y][x]])
                 if len(a[~np.isnan(a)])<length:
                     images_pixels3.append(np.nan)
@@ -270,16 +291,39 @@ def Mean_Median(Setnodata_datas):
         images_pixels1.append(images_pixels3)
         images_pixels2.append(images_pixels4)
         images_pixels5.append(images_pixels6)
-    WriteArray_RR(images_pixels1,Outpath,'Liner_Mean',images_pixels5)
-    WriteArray_RR(images_pixels2,Outpath,'Liner_Median',images_pixels5)
-    sg.popup_notify(f'Mean Task done! Spend-time: {datetime.datetime.now()-start}')
+    WriteArray_RR(images_pixels1,nn_mean,images_pixels5)
+    WriteArray_RR(images_pixels2,nn_median,images_pixels5)
+    sg.popup_notify(f'Mean-Median Task done! Spend-time: {datetime.datetime.now()-start}')
     
-def Weight(Setnodata_datas,R2_SetNodata):
+def Mean_Median_Year(Setnodata_datas,nn_mean,nn_median):
+    print('——————————————Mean,Median——————————————————')
+    start = datetime.datetime.now()
+    images_pixels1 = []  
+    images_pixels2 = []
+    for year in tqdm(range(len(years)),desc = 'Mean,Median Year'):
+        images_pixels3 = []
+        images_pixels4 = []
+        for y in range(miny_miny):
+            for x in range(minx_minx):
+                a = np.array([Setnodata_datas[0][year][y][x] , Setnodata_datas[1][year][y][x], Setnodata_datas[2][year][y][x] , Setnodata_datas[3][year][y][x],Setnodata_datas[4][year][y][x]])
+                if len(a[~np.isnan(a)])<length:
+                    images_pixels3.append(np.nan)
+                    images_pixels4.append(np.nan)
+                else:
+                    images_pixels3.append(np.nanmean(a))
+                    images_pixels4.append(np.nanmedian(a))
+        images_pixels1.append(images_pixels3)
+        images_pixels2.append(images_pixels4)
+    WriteArray_year(images_pixels1,nn_mean)
+    WriteArray_year(images_pixels2,nn_median)
+    sg.popup_notify(f'Mean-Median_Year Task done! Spend-time: {datetime.datetime.now()-start}')   
+
+def Weight(Setnodata_datas,R2_SetNodata,nn):
     print('——————————————Weight——————————————————')
     start = datetime.datetime.now()
     images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
     images_pixels5 = []
-    for year in tqdm(range(len(years)),desc = 'Year'):
+    for year in tqdm(range(len(years)),desc = 'Weight'):
         images_pixels3 = []
         images_pixels6 = []
         for y in range(miny_miny):
@@ -295,15 +339,35 @@ def Weight(Setnodata_datas,R2_SetNodata):
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
         images_pixels1.append(images_pixels3)
         images_pixels5.append(images_pixels6)
-    WriteArray_RR(images_pixels1,Outpath,'Liner_Weight',images_pixels5)
+    WriteArray_RR(images_pixels1,nn,images_pixels5)
+    sg.popup_notify(f'Weight Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 10000,fade_in_duration = 10000)
+
+def Weight_Year(Setnodata_datas,R2_SetNodata,nn):
+    print('——————————————Weight Year——————————————————')
+    start = datetime.datetime.now()
+    images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
+    for year in tqdm(range(len(years)),desc = 'Weight Year'):
+        images_pixels3 = []
+        for y in range(miny_miny):
+            for x in range(minx_minx):
+                a = np.array([Setnodata_datas[0][year][y][x] , Setnodata_datas[1][year][y][x], Setnodata_datas[2][year][y][x] , Setnodata_datas[3][year][y][x],Setnodata_datas[4][year][y][x]])
+                if len(a[~np.isnan(a)])<length:
+                    images_pixels3.append(np.nan)
+                else:
+                    images_pixels3.append((Setnodata_datas[0][year][y][x] * R2_SetNodata[0][y][x] + Setnodata_datas[1][year][y][x] * R2_SetNodata[1][y][x] + 
+                                          Setnodata_datas[2][year][y][x] * R2_SetNodata[2][y][x] + Setnodata_datas[3][year][y][x] * R2_SetNodata[3][y][x] +
+                                          Setnodata_datas[4][year][y][x] * R2_SetNodata[4][y][x])/(R2_SetNodata[0][y][x] + R2_SetNodata[1][y][x] + 
+                                          R2_SetNodata[2][y][x] + R2_SetNodata[3][y][x] + R2_SetNodata[4][y][x]))
+        images_pixels1.append(images_pixels3)
+    WriteArray_year(images_pixels1,nn)
     sg.popup_notify(f'Multiply_Regression Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 10000,fade_in_duration = 10000)
 
-def Multiply_Regression(Setnodata_datas):
+def Multiply_Regression(Setnodata_datas,nn):
     print('——————————————Multiply_Regression——————————————————')
     start = datetime.datetime.now()
     images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
     images_pixels5 = []
-    for y in range(miny_miny):
+    for y in tqdm(range(miny_miny),desc = 'Multiply_Regression'):
         for x in range(minx_minx):
             images_pixels3 = []
             images_pixels6 = []
@@ -313,14 +377,24 @@ def Multiply_Regression(Setnodata_datas):
             images_pixels1.append(images_pixels3)
             images_pixels5.append(images_pixels6)
     mean_results = []
-    print(' Processing Multiply_Regression ')
     for images,y in tqdm(zip(images_pixels1,images_pixels5)):
         mean_results.append(RR_Multiply_Regression(images,y))
-    mean_results = pd.DataFrame(mean_results)
-    datalist = [mean_results.iloc[:,0],mean_results.iloc[:,1],mean_results.iloc[:,2],mean_results.iloc[:,3]]
-    WriteArray(datalist,Outpath,'Liner_Mul')
+    mean_results = np.array(mean_results)
+    WriteArray([mean_results[:,0],mean_results[:,1],mean_results[:,2],mean_results[:,3]],nn)
     sg.popup_notify(f'Multiply_Regression Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 10000,fade_in_duration = 10000)
-    
+ 
+def Multiply_Regression_Year(Setnodata_datas,nn):
+    print('——————————————Multiply_Regression  Year——————————————————')
+    start = datetime.datetime.now()
+    images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
+    for y in tqdm(range(miny_miny),desc = 'Multiply_Regression_Year'):
+        for x in range(minx_minx):
+            images_pixels3 = []
+            for year in range(len(years)):
+                images_pixels3.append([Setnodata_datas[0][year][y][x],Setnodata_datas[1][year][y][x],Setnodata_datas[2][year][y][x],Setnodata_datas[3][year][y][x],Setnodata_datas[4][year][y][x]])
+            images_pixels1.append(images_pixels3)
+    WriteArray_year(np.array(images_pixels1).T.tolist(),nn)
+    sg.popup_notify(f'Multiply_Regression_Year Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 10000,fade_in_duration = 10000)
     
 if __name__ == "__main__": 
     
@@ -398,10 +472,16 @@ if __name__ == "__main__":
     W_r2 = gdal.Open(W_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
      
     
-    # Weight(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]))
-    Multiply_Regression(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
+    Mean_Median_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Mean_Year','Normal_Median_Year')
+    Mean_Median_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Mean_Year','Median_Year')
+    Weight_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Normal_Weight_Year')
+    Weight_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Weight_Year')
+    Multiply_Regression_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Multiply_Regression_Year')
+    Multiply_Regression_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Multiply_Regression_Year')
+    
+    # Multiply_Regression(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
     # Mean_Median(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
-    sg.popup_notify(title = 'Task done!',display_duration_in_ms = 10000,fade_in_duration = 10000)
+    # sg.popup_notify(title = 'Task done!',display_duration_in_ms = 10000,fade_in_duration = 10000)
     
     
 
