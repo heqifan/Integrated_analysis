@@ -53,7 +53,7 @@ na_me = ['Geodata','GLASS','MODIS','TPDC','W']
 
 length = 5
 styear = 2003
-edyear = 2017
+edyear = 2005
 
 minx_minx = 2671   #最小的列数
 miny_miny =  2101  #最小的行数
@@ -220,6 +220,20 @@ def RR_Multiply_Regression(mean_data,y_data):
     # print(na_me[np.argsort(model.coef_)])  #输出各个特征按照影响系数从小到大的顺序
     return [r2,rmse,mse,mae]
 
+def MR(mean_data,y_data):
+    if np.isnan(np.array(mean_data)).any() or np.isnan(np.array(y_data)).any():
+        return [np.nan]*len(years)
+    model = LinearRegression()
+    model.fit(np.array(mean_data),np.array(y_data).reshape(-1, 1))
+    y_predict = model.predict(mean_data).flatten().tolist()
+    # r2 = r2_score(np.array(y_data).reshape(-1, 1), y_predict)
+    # mse =  mean_squared_error(np.array(y_data).reshape(-1, 1), y_predict)
+    # mae = mean_absolute_error(np.array(y_data).reshape(-1, 1), y_predict)
+    # rmse = sqrt(mse) 
+    # print('r2:   ',r2)
+    # print(na_me[np.argsort(model.coef_)])  #输出各个特征按照影响系数从小到大的顺序
+    return y_predict
+
 def R2_LinearRegression(mean_data,y_data):
     start = datetime.datetime.now()
     model = linear_model.LinearRegression()
@@ -373,7 +387,7 @@ def Multiply_Regression(Setnodata_datas,nn):
             images_pixels6 = []
             for year in range(len(years)):
                 images_pixels3.append([Setnodata_datas[0][year][y][x],Setnodata_datas[1][year][y][x],Setnodata_datas[2][year][y][x],Setnodata_datas[3][year][y][x],Setnodata_datas[4][year][y][x]])
-                images_pixels6.append([Setnodata_datas[-1][year][y][x]])
+                images_pixels6.append(Setnodata_datas[-1][year][y][x])
             images_pixels1.append(images_pixels3)
             images_pixels5.append(images_pixels6)
     mean_results = []
@@ -387,13 +401,20 @@ def Multiply_Regression_Year(Setnodata_datas,nn):
     print('——————————————Multiply_Regression  Year——————————————————')
     start = datetime.datetime.now()
     images_pixels1 = []  #用于存放所有年，每年五种数据mean的值，一年一个列表
+    images_pixels5 = []
     for y in tqdm(range(miny_miny),desc = 'Multiply_Regression_Year'):
         for x in range(minx_minx):
             images_pixels3 = []
+            images_pixels6 = []
             for year in range(len(years)):
                 images_pixels3.append([Setnodata_datas[0][year][y][x],Setnodata_datas[1][year][y][x],Setnodata_datas[2][year][y][x],Setnodata_datas[3][year][y][x],Setnodata_datas[4][year][y][x]])
+                images_pixels6.append(Setnodata_datas[-1][year][y][x])
             images_pixels1.append(images_pixels3)
-    WriteArray_year(np.array(images_pixels1).T.tolist(),nn)
+            images_pixels5.append(images_pixels6)
+    mean_results = []
+    for images,y in tqdm(zip(images_pixels1,images_pixels5)):
+        mean_results.append(MR(images,y))
+    WriteArray_year(np.array(mean_results).T.tolist(),nn)
     sg.popup_notify(f'Multiply_Regression_Year Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 10000,fade_in_duration = 10000)
     
 if __name__ == "__main__": 
@@ -472,13 +493,13 @@ if __name__ == "__main__":
     W_r2 = gdal.Open(W_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
      
     
-    Mean_Median_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Mean_Year','Normal_Median_Year')
-    Mean_Median_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Mean_Year','Median_Year')
-    Weight_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Normal_Weight_Year')
-    Weight_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Weight_Year')
+    # Mean_Median_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Mean_Year','Normal_Median_Year')
+    # Mean_Median_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Mean_Year','Median_Year')
+    # Weight_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Normal_Weight_Year')
+    # Weight_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Weight_Year')
     Multiply_Regression_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Multiply_Regression_Year')
     Multiply_Regression_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Multiply_Regression_Year')
-    
+    Multiply_Regression(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Multiply_Regression_Year')
     # Multiply_Regression(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
     # Mean_Median(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
     # sg.popup_notify(title = 'Task done!',display_duration_in_ms = 10000,fade_in_duration = 10000)
