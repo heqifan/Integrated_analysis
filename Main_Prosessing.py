@@ -30,15 +30,16 @@ logging.basicConfig(
 
 
 
-Outpath = r'F:\Integrated_analysis_data\Data\Out'
-MuSyQ_inpath = r'F:\Integrated_analysis_data\Data\1Y\Geodata_2000_2017_1y'
+Outpath = r'F:\Integrated_analysis_data\Data\Out'   #输出路径
+
+MuSyQ_inpath = r'F:\Integrated_analysis_data\Data\1Y\Geodata_2000_2017_1y'   
 GLASS_inpath = r'F:\Integrated_analysis_data\Data\1Y\GLASS_2000_2017_1y'
 MODIS_path = r'F:\Integrated_analysis_data\Data\1Y\MODIS_2000_2017_1y'
 CASA_path = r'F:\Integrated_analysis_data\Data\1Y\TPDC_2000_2017_1y'
 W_path = r'F:\Integrated_analysis_data\Data\1Y\W_2000_2017_1y'
 LAI_path = r'F:\Integrated_analysis_data\Data\1Y\LAI_2003_2017_1y'
 
-MuSyQ_R2 = r'F:\Integrated_analysis_data\Data\Out\R2_Geodata\R2.tif'
+MuSyQ_R2 = r'F:\Integrated_analysis_data\Data\Out\R2_Geodata\R2.tif'    #每种模型的R2，weight中要用
 GLASS_R2 = r'F:\Integrated_analysis_data\Data\Out\R2_GLASS\R2.tif'
 MODIS_R2 = r'F:\Integrated_analysis_data\Data\Out\R2_MODIS\R2.tif'
 CASA_R2 = r'F:\Integrated_analysis_data\Data\Out\R2_TPDC\R2.tif'
@@ -46,33 +47,33 @@ W_R2 = r'F:\Integrated_analysis_data\Data\Out\R2_W\R2.tif'
 
 MuSyQ_key,GLASS_key,MODIS_key,CASA_key,W_key,LAI_key =  'Mul_*.tif','Mul_*.tif','Mul_*.tif','Reproject_*.tif','Resample_*.tif','Reproject_*.tif'
 
-# MuSyQ_key,GLASS_key,CASA_key,W_key =  'Mul_*.tif','Mul_*.tif','Reproject_*.tif','Resample_*.tif'
-nodatakey = ['<-1000','<-1000','<-1000','<-1000','<-1000','<-1000']
+nodatakey = ['<-1000','<-1000','<-1000','<-1000','<-1000','<-1000']  #每种模型的无效值
 
-na_me = ['Geodata','GLASS','MODIS','TPDC','W']
+na_me = ['Geodata','GLASS','MODIS','TPDC','W']   #每种模型的名称
 
-length = 5
-styear = 2003
-edyear = 2005
+length = 5      #模型的数量
+styear = 2003   #开始年份
+edyear = 2017   #结束年份
 
 minx_minx = 2671   #最小的列数
 miny_miny =  2101  #最小的行数
 
-years = [x for x in range(styear,edyear+1)]
+years = [x for x in range(styear,edyear+1)]  #年份的列表
 
-MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas = [],[],[],[],[],[]
-# MuSyQ_datas,GLASS_datas,CASA_datas,W_datas = [],[],[],[]
-var = ['R2','RMSE','MSE','MAE']
+MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas = [],[],[],[],[],[]  #定义空的列表，存放每年的数据
+var = ['R2','RMSE','MSE','MAE']   
 
 '''预处理函数'''
 def SetNodata(Datas,nodatakey):
-    i=0
+    '''
+    设置无效值
+    '''
     datas_ = []
-    for data in Datas:
+    for data,key in zip(Datas,nodatakey):
         data_ = []
         for da in data:
-            symbol = nodatakey[i][0]
-            value = int(nodatakey[i][1:])
+            symbol = key[0]  #获取符号
+            value = int(key[1:])  #获取数组
             if symbol == '>':
                 da[da>=value] = np.nan
                 da[da<0] = np.nan
@@ -80,11 +81,13 @@ def SetNodata(Datas,nodatakey):
                 da[da<=value] = np.nan
                 da[da<0] = np.nan
             data_.append(da)
-        i+=1
         datas_.append(data_)
     return datas_
 
 def R2_SetNodata(Datas):
+    '''
+    设置无效值
+    '''
     data_ = []
     for da in Datas:
         da[da<0] = np.nan
@@ -93,20 +96,24 @@ def R2_SetNodata(Datas):
     return data_
 
 def SetDatatype(Datas): 
+    '''
+    设置数据类型
+    '''
     datas_ = []
     for data in Datas:
         data_ = []
         for da in data:
-            print(f'原始的数据类型为{da.dtype}')
+            # print(f'原始的数据类型为{da.dtype}')
             da.dtype = np.uint32
-            print(f'数据类型更改为 {da.dtype}')
+            # print(f'数据类型更改为 {da.dtype}')
             data_.append(da)
         datas_.append(data_)
-        
     return datas_
 
 def normalization(Datas):
-
+    '''
+    归一化
+    '''
     datas_ = []
     for data in Datas:
         data_ = []
@@ -121,6 +128,9 @@ def normalization(Datas):
     
 '''Write'''
 def WriteArray(datalist,Name):
+    '''
+    写出数据
+    '''
     sample_tif = r'F:\Integrated_analysis_data\Data\Sample\Reproject_Mul_2002.tif'                          # 需要读取的tif文件所在的文件夹的所在文件夹的路径    
     ds = gdal.Open(sample_tif)                             # 打开文件
     im_width = minx_minx                          # 获取栅格矩阵的列数
@@ -196,15 +206,6 @@ def WriteArray_R2(images_pixels,y_datas,type_):
         result = R2_LinearRegression(images,y)
         mean_results.append(result)
     WriteArray([pd.DataFrame(mean_results).iloc[:,0]],type_) 
-# def RR_RF(images_pixels,Outpath,type_):
-#     images_list = np.array(images_pixels).T.tolist()
-#     mean_results = []
-#     for images in tqdm(images_list):
-#         result = RR_RandomForest(images)
-#         mean_results.append(result)
-#     mean_results = pd.DataFrame(mean_results)
-#     datalist = [mean_results.iloc[:,0],mean_results.iloc[:,1],mean_results.iloc[:,2],mean_results.iloc[:,3]]
-#     WriteArray(datalist,type_)
 
 def RR_Multiply_Regression(mean_data,y_data):
     if np.isnan(np.array(mean_data)).any() or np.isnan(np.array(y_data)).any():
