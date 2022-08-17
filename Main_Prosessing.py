@@ -661,7 +661,7 @@ if __name__ == "__main__":
     '''先计算平均值，中值的RR'''
     # Mean_Median_RR(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Liner_Mean','Liner_Median')
     '''然后计算每个模型的R2'''
-    # Cal_R2(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
+    Cal_R2(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
     
     # MuSyQ_r2 = gdal.Open(MuSyQ_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
     # GLASS_r2 = gdal.Open(GLASS_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
@@ -684,7 +684,7 @@ if __name__ == "__main__":
 
     
     # normalization_Writearray_Spatial(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey))
-    normalization_Writearray_Spatial_time(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey))
+    # normalization_Writearray_Spatial_time(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey))
     sg.popup_notify(title = 'Task done!',display_duration_in_ms = 10000,fade_in_duration = 10000)
 
     
