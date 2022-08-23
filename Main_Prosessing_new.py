@@ -51,6 +51,8 @@ logging.basicConfig(
 
 Outpath = r'J:\Integrated_analysis_data\Data\Out'   #输出路径
 
+Sample_tif = r'J:\Integrated_analysis_data\Data\Sample\Mask_Mul_2005.tif'
+
 MuSyQ_inpath = r'J:\Integrated_analysis_data\Data\1Y\Geodata_2000_2017_1y'
 GLASS_inpath = r'J:\Integrated_analysis_data\Data\1Y\GLASS_2000_2017_1y'
 MODIS_path = r'J:\Integrated_analysis_data\Data\1Y\MODIS_2000_2017_1y'
@@ -74,10 +76,10 @@ na_me2 = ['Geodata','GLASS','MODIS','TPDC','W','LAI']   #每种模型和验证�
 Pools = 8
 length = 5      #模型的数量
 styear = 2003   #开始年份
-edyear = 2017   #结束年份
+edyear = 2005   #结束年份
 
-minx_minx = 2671   #列数
-miny_miny =  2101  #行数
+minx_minx = 100   #列数
+miny_miny =  100  #行数
 
 years = [x for x in range(styear,edyear+1)]  #年份的列表
 
@@ -147,7 +149,7 @@ def A_WriteArray(datalist,Name,var_list):
     '''
     写出数据
     '''
-    sample_tif = r'J:\Integrated_analysis_data\Data\Sample\Mask_Mul_2005.tif'                            # 需要读取的tif文件所在的文件夹的所在文件夹的路径
+    sample_tif = Sample_tif                            # 需要读取的tif文件所在的文件夹的所在文件夹的路径
     ds = gdal.Open(sample_tif)                             # 打开文件
     im_width = minx_minx                          # 获取栅格矩阵的列数
     im_height = miny_miny                         # 获取栅格矩阵的行数                    # 波段的indice起始为1，不为0
@@ -885,12 +887,12 @@ def Vote_RR(Setnodata_datas, nn):
     print('———————————VoteRegressor_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
     try:
-        mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
+        mean_results = pool.map(Vote_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
     except:
         pool.restart()
-        mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
+        mean_results = pool.map(Vote_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
     print('————————————————————————————————')
@@ -935,7 +937,7 @@ def normalization_Writearray_Spatial(Datas):
     '''
     归一化（空间）
     '''
-    sample_tif = r'J:\Integrated_analysis_data\Data\Sample\Mask_Mul_2005.tif'      # 需要读取的tif文件所在的文件夹的所在文件夹的路径
+    sample_tif = Sample_tif      # 需要读取的tif文件所在的文件夹的所在文件夹的路径
     ds = gdal.Open(sample_tif)                             # 打开文件
     for data,na in zip(Datas,na_me2):
         for da,year in zip(data,years):
@@ -962,13 +964,12 @@ def normalization_Writearray_Spatial(Datas):
             out_ds.FlushCache()  #(刷新缓存)
             del out_ds #删除 
             logging.info(f' {outdir + os.sep + "Normal_Spatial_" + na + "_" + str(year) + ".tif"} is  ok   !!!!!!!!')
-    del ds 
-
+    del ds
 def normalization_Writearray_Spatial_time(Datas):
     '''
     归一化（空间和时间）
     '''
-    sample_tif = r'J:\Integrated_analysis_data\Data\Sample\Mask_Mul_2005.tif'                         # 需要读取的tif文件所在的文件夹的所在文件夹的路径
+    sample_tif = Sample_tif                         # 需要读取的tif文件所在的文件夹的所在文件夹的路径
     ds = gdal.Open(sample_tif)                             # 打开文件
     MuSyQ_min,GLASS_min,MODIS_min,CASA_min,W_min,LAI_min = np.nanmin(Datas[0]),np.nanmin(Datas[1]),np.nanmin(Datas[2]),np.nanmin(Datas[3]),np.nanmin(Datas[4]),np.nanmin(Datas[5])
     MuSyQ_max,GLASS_max,MODIS_max,CASA_max,W_max,LAI_max = np.nanmax(Datas[0]),np.nanmax(Datas[1]),np.nanmax(Datas[2]),np.nanmax(Datas[3]),np.nanmax(Datas[4]),np.nanmax(Datas[5])
