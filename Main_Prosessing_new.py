@@ -4,15 +4,16 @@ Created on Mon Jul  4 20:58:11 2022
 
 @author: HYF
 """
+import smtplib
+from email.mime.text import MIMEText
+from email.header import Header
+import gc
 from sklearn.ensemble import VotingRegressor
 from sklearn.linear_model import RidgeCV
 from sklearn.svm import LinearSVR
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.ensemble import StackingRegressor
-from sklearn.ensemble import RandomForestRegressor
 from sklearn import model_selection
-from statistics import geometric_mean
-from scipy.stats.mstats import gmean
 from sklearn import datasets, ensemble
 from sklearn.inspection import permutation_importance
 from sklearn.ensemble import BaggingRegressor
@@ -24,21 +25,16 @@ import numpy as np
 import os
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import AdaBoostRegressor
-import pylab
 import sklearn
 from glob import glob as g
 from osgeo import gdal
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
 import datetime
 from sklearn.metrics import mean_squared_error,r2_score,mean_absolute_error
 from math import sqrt
-import time
-import random
 from sklearn.ensemble import GradientBoostingRegressor
 import logging
 from sklearn import linear_model
-from sklearn.linear_model import LinearRegression   #引入多元线性回归算法模块进行相应的训练
+from sklearn.linear_model import LinearRegression
 from multiprocessing.dummy import Pool as ThreadPool
 from pathos.multiprocessing import ProcessingPool as newPool
 
@@ -47,9 +43,7 @@ logging.basicConfig(
     format="%(asctime)s [*] %(processName)s %(message)s"
 )
 
-
-
-Outpath = r'J:\Integrated_analysis_data\Data\Out'   #输出路径
+Outpath = r'J:\Integrated_analysis_data\Data\Out'
 
 Sample_tif = r'J:\Integrated_analysis_data\Data\Sample\Mask_Mul_2005.tif'
 
@@ -70,22 +64,50 @@ MuSyQ_key,GLASS_key,MODIS_key,CASA_key,W_key,LAI_key =  'Mask_*.tif','Mask_*.tif
 
 nodatakey = [['<-1000'],['<-1000'],['<-1000'],['<-1000'],['<-1000'],['<-1000']]  #每种模型的无效值
 
-na_me = ['Geodata','GLASS','MODIS','TPDC','W']     #每种模型的名称
-na_me2 = ['Geodata','GLASS','MODIS','TPDC','W','LAI']   #每种模型和验证数据的名称
+na_me = ['Geodata','GLASS','MODIS','TPDC','W']
+na_me2 = ['Geodata','GLASS','MODIS','TPDC','W','LAI']
 
-Pools = 8
+def message(text):
+    mail_host = "smtp.qq.com"  # 设置的邮件服务器host必须是发送邮箱的服务器，与接收邮箱无关。
+    mail_user = "2051936579"  # qq邮箱登陆名
+    mail_pass = "ctbvgvslaakyecci"  # 开启stmp服务的时候并设置的授权码，注意！不是QQ密码。
+
+    sender = '2051936579@qq.com'  # 发送方qq邮箱
+    receivers = ['2051936579@qq.com']  # 接收方qq邮箱
+
+    message = MIMEText(text, 'plain', 'utf-8')
+    message['From'] = Header("heqifan", 'utf-8')  # 设置显示在邮件里的发件人
+    message['To'] = Header("heqifan", 'utf-8')  # 设置显示在邮件里的收件人
+
+    subject = 'python smtp email test'
+    message['Subject'] = Header(subject, 'utf-8')  # 设置主题和格式
+
+    try:
+        smtpobj = smtplib.SMTP_SSL(mail_host, 465)  # 本地如果有本地服务器，则用localhost ,默认端口２５,腾讯的（端口465或587）
+        smtpobj.set_debuglevel(1)
+        smtpobj.login(mail_user, mail_pass)  # 登陆QQ邮箱服务器
+        smtpobj.sendmail(sender, receivers, message.as_string())  # 发送邮件
+        print("邮件发送成功")
+        smtpobj.quit()  # 退出
+    except smtplib.SMTPException as e:
+        print("Error:无法发送邮件")
+        print(e)
+
+
+
+Pools = 16
 length = 5      #模型的数量
 styear = 2003   #开始年份
-edyear = 2005   #结束年份
+edyear = 2017   #结束年份
 
-minx_minx = 100   #列数
-miny_miny =  100  #行数
+minx_minx = 2671   #列数
+miny_miny =  2101  #行数
 
 years = [x for x in range(styear,edyear+1)]  #年份的列表
 
 MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas = [],[],[],[],[],[]  #定义空的列表，存放每年的数据
-var = ['R2','RMSE','MSE','MAE']   
-
+#var = ['R2','RMSE','MSE','MAE']
+var = ['R2','RMSE']
 '''预处理函数'''
 def SetNodata(Datas,nodatakey):
     '''
@@ -120,11 +142,11 @@ def SetDatatype(Datas):
     for data in Datas:
         data_ = []
         for da in data:
-            # print(f'原始的数据类型为{da.dtype}')
             da.dtype = np.uint32
-            # print(f'数据类型更改为 {da.dtype}')
             data_.append(da)
         datas_.append(data_)
+    del Datas
+    gc.collect()
     return datas_
 
 def normalization(Datas):
@@ -139,8 +161,10 @@ def normalization(Datas):
             min_value = np.nanmin(da)
             da = (da-min_value)/(max_value-min_value)
             data_.append(da)
-        data_ = np.array(data_)
+        data_ = np.array(data_).astype('float16')
         datas_.append(data_)
+    del Datas
+    gc.collect()
     return datas_
 
     
@@ -149,8 +173,7 @@ def A_WriteArray(datalist,Name,var_list):
     '''
     写出数据
     '''
-    sample_tif = Sample_tif                            # 需要读取的tif文件所在的文件夹的所在文件夹的路径
-    ds = gdal.Open(sample_tif)                             # 打开文件
+    ds = gdal.Open(Sample_tif)                    # 打开文件
     im_width = minx_minx                          # 获取栅格矩阵的列数
     im_height = miny_miny                         # 获取栅格矩阵的行数                    # 波段的indice起始为1，不为0
     img_datatype = gdal.GDT_Float32                    # 数据类型
@@ -168,320 +191,506 @@ def A_WriteArray(datalist,Name,var_list):
         out_ds.SetProjection(ds.GetProjection())                # 投影信息
         out_ds.SetGeoTransform(ds.GetGeoTransform())            # 仿射信息
         out_band = out_ds.GetRasterBand(1)
-        out_band.WriteArray(np.array(datalist[j]).reshape(miny_miny,minx_minx))    # 写入数据 (why)
+        out_band.WriteArray(np.array(datalist[j]).reshape(miny_miny,minx_minx).astype('float16'))    # 写入数据 (why)
+        out_band.SetNoDataValue(-9999)
         out_ds.FlushCache()  #(刷新缓存)
-        del out_ds #删除 
+        del out_ds
+        del out_band
+        gc.collect()
         logging.info(f' {outdir + os.sep + Name + "_" + str(var_list[j]) + ".tif"} is  ok   !!!!!!!!')
-    del ds    
-
+    del ds
+    del datalist
+    gc.collect()
 def M_R_P(mean_data,y_data,r_name):
     '''Get Multiply_Regression_RR or Get Multiply_Regression Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan,np.nan,np.nan,np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan]*len(years)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model = LinearRegression()
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del mean_data
+            del y_data
+            del y_predict
+            del r_name
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
     else:
-        model = LinearRegression()
-        model.fit(mean_data,y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse =  mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse) 
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2,rmse,mse,mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model = LinearRegression()
+            model.fit(mean_data,y_data.ravel())
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def Ba_R_P(mean_data, y_data, r_name):
     '''Get Bagging_RR or Get Bagging Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan, np.nan, np.nan, np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan] * len(years)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model = BaggingRegressor()
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del mean_data
+            del y_predict
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
     else:
-        model = BaggingRegressor()
-        model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse = mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse)
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2, rmse, mse, mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model = BaggingRegressor()
+            model.fit(mean_data,y_data.ravel())
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def Ada_R_P(mean_data, y_data, r_name):
     '''Get AdaBoost_RR or Get AdaBoost Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
     rng = np.random.RandomState(1)
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan, np.nan, np.nan, np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan] * len(years)
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model = AdaBoostRegressor(DecisionTreeRegressor(max_depth=4),
+                                      n_estimators=50, random_state=rng)
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del mean_data
+            del y_predict
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
     else:
-        model = AdaBoostRegressor(DecisionTreeRegressor(max_depth=4),
-                                   n_estimators=300, random_state=rng)
-        model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse = mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse)
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2, rmse, mse, mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
-
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model = AdaBoostRegressor(DecisionTreeRegressor(max_depth=4),
+                                      n_estimators=50, random_state=rng)
+            model.fit(mean_data,y_data.ravel())
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def Gra_R_P(mean_data, y_data, r_name):
     '''Get Gradient_RR or Get Gradient Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
-    rng = np.random.RandomState(1)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
     params = {
-        "n_estimators": 500,
+        "n_estimators": 50,
         "max_depth": 4,
         "min_samples_split": 5,
         "learning_rate": 0.01,
         "loss": "squared_error",
     }
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan, np.nan, np.nan, np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan] * len(years)
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model = ensemble.GradientBoostingRegressor(**params)
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del mean_data
+            del y_data
+            del r_name
+            del y_predict
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
     else:
-        model = ensemble.GradientBoostingRegressor(**params)
-        model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse = mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse)
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2, rmse, mse, mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
-
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model = ensemble.GradientBoostingRegressor(**params)
+            model.fit(mean_data,y_data.ravel())
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def Sta_R_P(mean_data, y_data, r_name):
     '''Get Stacking_RR or Get Stacking Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
     estimators = [('lr', RidgeCV()), ('svr', LinearSVR(random_state=42))]
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan, np.nan, np.nan, np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan] * len(years)
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model = StackingRegressor(estimators=estimators,final_estimator=RandomForestRegressor(n_estimators=10,random_state=42))
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del y_predict
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
     else:
-        model = StackingRegressor(estimators=estimators,final_estimator=RandomForestRegressor(n_estimators=10,random_state=42))
-        model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse = mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse)
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2, rmse, mse, mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
-
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model = StackingRegressor(estimators=estimators,final_estimator=RandomForestRegressor(n_estimators=10,random_state=42))
+            model.fit(mean_data,y_data.ravel())
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def RF_R_P(mean_data, y_data, r_name):
     '''Get RandomForestRegressor_RR or Get RandomForestRegressor Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan, np.nan, np.nan, np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan] * len(years)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model = RandomForestRegressor(random_state=0)
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del y_predict
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
     else:
-        model = RandomForestRegressor(random_state=0)
-        model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse = mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse)
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2, rmse, mse, mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
-
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model = RandomForestRegressor(random_state=0)
+            model.fit(mean_data,y_data.ravel())
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def Vote_R_P(mean_data, y_data, r_name):
     '''Get Vote_RR or Get Vote Predicted Data'''
-    mean_data = np.array(mean_data)
-    y_data = np.array(y_data).reshape(-1, 1)
-    if np.isnan(mean_data).any() or np.isnan(y_data).any():
-        if r_name == 'RR':
-            return [np.nan, np.nan, np.nan, np.nan]
-        elif r_name == 'Predicted':
-            return [np.nan] * len(years)
-    else:
-        model1 = GradientBoostingRegressor(random_state=1)
-        model2 = RandomForestRegressor(random_state=1)
-        model3 = LinearRegression()
-        model1.fit(mean_data, y_data)
-        model2.fit(mean_data, y_data)
-        model3.fit(mean_data, y_data)
+    mean_data = np.array(mean_data).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
+    if r_name == 'RR':
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999, -9999]).astype('float16')
+        else:
+            model1 = GradientBoostingRegressor(random_state=1)
+            model2 = RandomForestRegressor(random_state=1)
+            model3 = LinearRegression()
+            model1.fit(mean_data, y_data)
+            model2.fit(mean_data, y_data)
+            model3.fit(mean_data, y_data)
 
-        model = VotingRegressor([('gb', model1), ('rf', model2), ('lr', model3)])
-        model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
-        r2 = r2_score(y_data, y_predict)
-        mse = mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse)
-        y_predict_data = model.predict(mean_data).flatten().tolist()
-        if r_name == 'RR':
-            return [r2, rmse, mse, mae]
-        elif r_name == 'Predicted':
-            return y_predict_data
+            model = VotingRegressor([('gb', model1), ('rf', model2), ('lr', model3)])
+            model.fit(mean_data, y_data.ravel())
+            y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+            del model
+            del model1
+            del model2
+            del model3
+            gc.collect()
+            r2 = r2_score(y_data, y_predict)
+            # mse =  mean_squared_error(y_data, y_predict)
+            # mae = mean_absolute_error(y_data, y_predict)
+            rmse = sqrt(mean_squared_error(y_data, y_predict))
+            del mean_data
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([r2, rmse]).astype('float16')
+    else:
+        if np.isnan(mean_data).any() or np.isnan(y_data).any():
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array([-9999]*len(years)).astype('float16')
+        else:
+            model1 = GradientBoostingRegressor(random_state=1)
+            model2 = RandomForestRegressor(random_state=1)
+            model3 = LinearRegression()
+            model1.fit(mean_data, y_data)
+            model2.fit(mean_data, y_data)
+            model3.fit(mean_data, y_data)
+
+            model = VotingRegressor([('gb', model1), ('rf', model2), ('lr', model3)])
+            model.fit(mean_data,y_data.ravel())
+
+            y_predict_data = model.predict(mean_data).flatten().tolist()
+            del model
+            del model1
+            del model2
+            del model3
+            del mean_data
+            del y_data
+            del r_name
+            gc.collect()
+            return np.array(y_predict_data).astype('float16')
 def L_R(mean_data,y_data,r_name):
     '''Get liner_Regression_R2 or get liner_Regression_RR'''
-    mean_data = np.array(mean_data).reshape(-1, 1)
-    y_data = np.array(y_data).reshape(-1, 1)
+    mean_data = np.array(mean_data).reshape(-1, 1).astype('float16')
+    y_data = np.array(y_data).reshape(-1, 1).astype('float16')
     if np.isnan(mean_data).any() or np.isnan(y_data).any():
         if r_name == 'R2':
-            return [np.nan]
+            return np.array([-9999]).astype('float16')
         elif r_name == 'RR':
-            return [np.nan,np.nan,np.nan,np.nan]
+            return np.array([-9999, -9999]).astype('float16')
     else:
         model = linear_model.LinearRegression()
         model.fit(mean_data, y_data.ravel())
-        y_predict = model.predict(mean_data).reshape(-1, 1)
+        y_predict = model.predict(mean_data).reshape(-1, 1).astype('float16')
+        del model
+        gc.collect()
         r2 = r2_score(y_data, np.array(y_predict))
-        mse =  mean_squared_error(y_data, y_predict)
-        mae = mean_absolute_error(y_data, y_predict)
-        rmse = sqrt(mse) 
+        #mse =  mean_squared_error(y_data, y_predict)
+        #mae = mean_absolute_error(y_data, y_predict)
+        rmse = sqrt(mean_squared_error(y_data, y_predict))
+        del mean_data
+        del y_data
+        del y_predict
+        gc.collect()
         if r_name == 'R2':
-            return [r2]
+            return np.array([r2]).astype('float16')
         elif r_name == 'RR':
-            return [r2,mse,mae,rmse]
-
+            return np.array([r2,rmse]).astype('float16')
 def Cal_R2(Setnodata_datas):
     start = datetime.datetime.now()
     for name,da in tqdm(enumerate(Setnodata_datas[:-1]),desc = 'Cal_R2'):
-        images_pixels1 = da.reshape(da.shape[0],da.shape[1] * da.shape[2]).T
-        images_pixels5 = Setnodata_datas[-1].reshape(Setnodata_datas[-1].shape[0],Setnodata_datas[-1].shape[1] * Setnodata_datas[-1].shape[2]).T
+        images_pixels1 = da.reshape(da.shape[0],da.shape[1] * da.shape[2]).astype('float16').T
+        images_pixels5 = Setnodata_datas[-1].reshape(Setnodata_datas[-1].shape[0],Setnodata_datas[-1].shape[1] * Setnodata_datas[-1].shape[2]).astype('float16').T
         name_list = ['R2']*images_pixels1.shape[0]
         print('————————————————————————————————')
         print('———————————R2 Pool Start—————————————————————')
         try:
-            mean_results = pool.map(L_R,images_pixels1,images_pixels5,name_list)
-            pool.close()
-            pool.join()
-        except:
             pool.restart()
             mean_results = pool.map(L_R,images_pixels1,images_pixels5,name_list)
             pool.close()
             pool.join()
+        except:
+            message('R2 运行成功')
         print('————————————————————————————————')
         print('———————————R2 Pool End—————————————————————')
-        A_WriteArray([np.array(mean_results)[:,0]],'R2_' + na_me[name],['']) 
+        del images_pixels1
+        del images_pixels5
+        gc.collect()
+        A_WriteArray([np.array(mean_results)[:,0].astype('float16')],'R2_' + na_me[name],[''])
+        del mean_results
+        gc.collect()
     end = datetime.datetime.now()
     sg.popup_notify(f' Cal_R2     ALL  Task done!!!! Spend-time: {end-start}')
-
 '''total'''
 def Mean_Median_RR(Setnodata_datas,nn_mean,nn_median):
     print('——————————————Mean,Median——————————————————')
-    start = datetime.datetime.now()
     Setnodata_datas = np.array(Setnodata_datas)   #变为一个四维数组
     images_pixels1 = np.nanmean(Setnodata_datas[:-1,:,:,:],axis=0)   #将所有模型求平均
     images_pixels2 = np.nanmedian(Setnodata_datas[:-1,:,:,:],axis=0)  #将将所有模型求中值
     images_pixels5 = Setnodata_datas[-1, :, :, :]
-    images_pixels1 = images_pixels1.reshape(images_pixels1.shape[0],images_pixels1.shape[1] * images_pixels1.shape[2]).T  # 转置
-    images_pixels5 = images_pixels5.reshape(images_pixels5.shape[0],images_pixels5.shape[1] * images_pixels5.shape[2]).T  # 转置
-    images_pixels2 = images_pixels2.reshape(images_pixels2.shape[0],images_pixels2.shape[1] * images_pixels2.shape[2]).T  # 转置
+    images_pixels1 = images_pixels1.reshape(images_pixels1.shape[0],images_pixels1.shape[1] * images_pixels1.shape[2]).astype('float16').T  # 转置
+    images_pixels5 = images_pixels5.reshape(images_pixels5.shape[0],images_pixels5.shape[1] * images_pixels5.shape[2]).astype('float16').T  # 转置
+    images_pixels2 = images_pixels2.reshape(images_pixels2.shape[0],images_pixels2.shape[1] * images_pixels2.shape[2]).astype('float16').T  # 转置
     print('————————————————————————————————')
     print('———————————Mean Pool Start—————————————————————')
     name_list = ['RR']*images_pixels1.shape[0]
     try:
-        mean_results = pool.map(L_R,images_pixels1,images_pixels5,name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(L_R,images_pixels1,images_pixels5,name_list)
         pool.close()
         pool.join()
+        message(nn_mean + '运行成功了hhhhhhh')
+    except:
+        message(nn_mean + '运行报错了,快来看看吧55555')
     print('———————————Mean Pool End—————————————————————')
     print('————————————————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:,0],mean_results[:,1],mean_results[:,2],mean_results[:,3]],nn_mean,var)
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])],nn_mean,var)
+    del images_pixels1
+    del mean_results
+    gc.collect()
     print('————————————————————————————————')
     print('———————————Median Pool Start—————————————————————')
     name_list = ['RR']*images_pixels2.shape[0]
     try:
-        mean_results = pool.map(L_R,images_pixels2,images_pixels5,name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(L_R,images_pixels2,images_pixels5,name_list)
         pool.close()
         pool.join()
+        message(nn_median + '运行成功了hhhhhhh')
+    except:
+        message(nn_median + '运行报错了,快来看看吧55555')
     print('———————————Median Pool End—————————————————————')
     print('————————————————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:,0],mean_results[:,1],mean_results[:,2],mean_results[:,3]],nn_median,var)
-    
+    del images_pixels2
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])],nn_median,var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
 def Mean_Median_Year(Setnodata_datas,nn_mean,nn_median):
     print('——————————————Mean,Median——————————————————')
     start = datetime.datetime.now()
-    Setnodata_datas = np.array(Setnodata_datas)
-    images_pixels1 = np.nanmean(Setnodata_datas[:-1,:,:,:],axis=0)
-    images_pixels2 = np.nanmedian(Setnodata_datas[:-1,:,:,:],axis=0)
+    Setnodata_datas = np.array(Setnodata_datas).astype('float16')
+    images_pixels1 = np.nanmean(Setnodata_datas[:-1,:,:,:],axis=0).astype('float16')
+    images_pixels2 = np.nanmedian(Setnodata_datas[:-1,:,:,:],axis=0).astype('float16')
     A_WriteArray(images_pixels1,nn_mean,years)
     A_WriteArray(images_pixels2,nn_median,years)
-    sg.popup_notify(f'Mean-Median_Year Task done! Spend-time: {datetime.datetime.now()-start}')   
-
+    del images_pixels1
+    del images_pixels2
+    del Setnodata_datas
+    gc.collect()
+    sg.popup_notify(f'Mean-Median_Year Task done! Spend-time: {datetime.datetime.now()-start}')
 def Weight_RR(Setnodata_datas,R2_SetNodata,nn):
     print('——————————————Weight——————————————————')
     start = datetime.datetime.now()
-    images_pixels1 = np.array(np.nansum(np.array([Setnodata_datas[i] * R2_SetNodata[i] for i in range(len(Setnodata_datas[:-1]))]),axis=0) / np.nansum(np.array(R2_SetNodata), axis=0))
-    images_pixels5 = Setnodata_datas[-1]
-    images_pixels1 = images_pixels1.reshape(images_pixels1.shape[0],images_pixels1.shape[1] * images_pixels1.shape[2]).T  # 转置
-    images_pixels5 = images_pixels5.reshape(images_pixels5.shape[0],images_pixels5.shape[1] * images_pixels5.shape[2]).T  # 转置
+    images_pixels1 = np.array(np.nansum(np.array([Setnodata_datas[i] * R2_SetNodata[i] for i in range(len(Setnodata_datas[:-1]))]),axis=0) / np.nansum(np.array(R2_SetNodata), axis=0)).astype('float16')
+    images_pixels5 = Setnodata_datas[-1].astype('float16')
+    images_pixels1 = images_pixels1.reshape(images_pixels1.shape[0],images_pixels1.shape[1] * images_pixels1.shape[2]).astype('float16').T  # 转置
+    images_pixels5 = images_pixels5.reshape(images_pixels5.shape[0],images_pixels5.shape[1] * images_pixels5.shape[2]).astype('float16').T  # 转置
     print('————————————————————————————————')
     print('———————————Weight Pool Start—————————————————————')
     name_list = ['RR']*images_pixels1.shape[0]
-    
     try:
-        mean_results = pool.map(L_R,images_pixels1,images_pixels5,name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(L_R,images_pixels1,images_pixels5,name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Weight Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:,0],mean_results[:,1],mean_results[:,2],mean_results[:,3]],nn,var)      
-    sg.popup_notify(f'Weight Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 1000,fade_in_duration = 1000)
-
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])],nn,var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
+    sg.popup_notify(f'Weight Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 100,fade_in_duration = 100)
 def Weight_Year(Setnodata_datas,R2_SetNodata,nn):
     print('——————————————Weight Year——————————————————')
     start = datetime.datetime.now()
-    images_pixels1 = np.array(np.nansum(np.array([Setnodata_datas[i] * R2_SetNodata[i] for i in range(len(Setnodata_datas[:-1]))]),axis=0) / np.nansum(np.array(R2_SetNodata), axis=0))
+    images_pixels1 = np.array(np.nansum(np.array([Setnodata_datas[i] * R2_SetNodata[i] for i in range(len(Setnodata_datas[:-1]))]),axis=0) / np.nansum(np.array(R2_SetNodata), axis=0)).astype('float16')
     A_WriteArray(images_pixels1,nn,years)
-    sg.popup_notify(f'Weight_Year Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 1000,fade_in_duration = 1000)
-
+    del images_pixels1
+    del Setnodata_datas
+    gc.collect()
+    sg.popup_notify(f'Weight_Year Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 100,fade_in_duration = 100)
 def Multiply_Regression_RR(Setnodata_datas,nn):
     print('——————————————Multiply_Regression——————————————————')
     start = datetime.datetime.now()
@@ -492,26 +701,31 @@ def Multiply_Regression_RR(Setnodata_datas,nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Multiply_Regression_RR Pool Start—————————————————————')
     name_list = ['RR']*images_pixels1.shape[0]
     try:
-        mean_results = pool.map(M_R_P,images_pixels1,images_pixels5,name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(M_R_P,images_pixels1,images_pixels5,name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Multiply_Regression_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:,0],mean_results[:,1],mean_results[:,2],mean_results[:,3]],nn,var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])],nn,var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Multiply_Regression Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 1000,fade_in_duration = 1000)
 def Multiply_Regression_Year(Setnodata_datas,nn):
     print('——————————————Multiply_Regression  Year——————————————————')
@@ -523,28 +737,31 @@ def Multiply_Regression_Year(Setnodata_datas,nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Multiply_Regression_Year Pool Start—————————————————————')
     name_list = ['Predicted']*len(images_pixels1)
-
     try:
-        mean_results = pool.map(M_R_P,images_pixels1,images_pixels5,name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(M_R_P,images_pixels1,images_pixels5,name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Multiply_Regression_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(),nn,years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(),nn,years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Multiply_Regression_Year Task done! Spend-time: {datetime.datetime.now()-start}',display_duration_in_ms = 1000,fade_in_duration = 1000)
-
 def Bagging_RR(Setnodata_datas, nn):
     print('——————————————Bagging——————————————————')
     start = datetime.datetime.now()
@@ -555,28 +772,29 @@ def Bagging_RR(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Bagging_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
-    try:
-        mean_results = pool.map(Ba_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
-        pool.restart()
-        mean_results = pool.map(Ba_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
+    pool.restart()
+    mean_results = pool.map(Ba_R_P, images_pixels1, images_pixels5, name_list)
+    pool.close()
+    pool.join()
     print('————————————————————————————————')
     print('———————————Bagging_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:, 0], mean_results[:, 1], mean_results[:, 2], mean_results[:, 3]], nn, var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])], nn, var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Bagging Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Bagging_Year(Setnodata_datas, nn):
     print('——————————————Bagging_Year——————————————————')
     start = datetime.datetime.now()
@@ -587,29 +805,32 @@ def Bagging_Year(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Bagging_Year Pool Start—————————————————————')
     name_list = ['Predicted'] * len(images_pixels1)
-
     try:
-        mean_results = pool.map(Ba_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Ba_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Bagging_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(), nn, years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(), nn, years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Bagging_Year Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
-
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Ada_RR(Setnodata_datas, nn):
     print('——————————————AdaBoost RR——————————————————')
     start = datetime.datetime.now()
@@ -620,28 +841,34 @@ def Ada_RR(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————AdaBoost_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
     try:
-        mean_results = pool.map(Ada_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Ada_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        # #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass
+        # pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————AdaBoost_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:, 0], mean_results[:, 1], mean_results[:, 2], mean_results[:, 3]], nn, var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])], nn, var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'AdaBoost Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Ada_Year(Setnodata_datas, nn):
     print('——————————————Ada_Year——————————————————')
     start = datetime.datetime.now()
@@ -652,29 +879,32 @@ def Ada_Year(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Ada_Year Pool Start—————————————————————')
     name_list = ['Predicted'] * len(images_pixels1)
-
     try:
-        mean_results = pool.map(Ada_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Ada_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Ada_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(), nn, years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(), nn, years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Ada_Year Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
-
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Gra_RR(Setnodata_datas, nn):
     print('——————————————Gradient RR——————————————————')
     start = datetime.datetime.now()
@@ -685,29 +915,33 @@ def Gra_RR(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
-    print('———————————AdaBoost_RR Pool Start—————————————————————')
+    print('———————————Gradient_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
     try:
-        mean_results = pool.map(Gra_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Gra_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Gradient_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:, 0], mean_results[:, 1], mean_results[:, 2], mean_results[:, 3]], nn, var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])], nn, var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Gradient Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
-
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Gra_Year(Setnodata_datas, nn):
     print('——————————————Gradient_Year——————————————————')
     start = datetime.datetime.now()
@@ -718,29 +952,32 @@ def Gra_Year(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Gradient_Year Pool Start—————————————————————')
     name_list = ['Predicted'] * len(images_pixels1)
-
     try:
-        mean_results = pool.map(Gra_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Gra_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Gradient_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(), nn, years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(), nn, years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Gradient_Year Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
-
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Sta_RR(Setnodata_datas, nn):
     print('——————————————Stacking RR——————————————————')
     start = datetime.datetime.now()
@@ -751,28 +988,33 @@ def Sta_RR(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Stacking_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
     try:
-        mean_results = pool.map(Sta_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Sta_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Stacking_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:, 0], mean_results[:, 1], mean_results[:, 2], mean_results[:, 3]], nn, var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])], nn, var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Stacking Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Sta_Year(Setnodata_datas, nn):
     print('——————————————Stacking_Year——————————————————')
     start = datetime.datetime.now()
@@ -783,28 +1025,32 @@ def Sta_Year(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————Stacking_Year Pool Start—————————————————————')
     name_list = ['Predicted'] * len(images_pixels1)
-
     try:
-        mean_results = pool.map(Sta_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Sta_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————Stacking_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(), nn, years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(), nn, years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'Stacking_Year Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def RF_RR(Setnodata_datas, nn):
     print('——————————————RandomForestRegressor RR——————————————————')
     start = datetime.datetime.now()
@@ -815,28 +1061,33 @@ def RF_RR(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————RandomForestRegressor_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
     try:
-        mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————RandomForestRegressor_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:, 0], mean_results[:, 1], mean_results[:, 2], mean_results[:, 3]], nn, var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])], nn, var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'RandomForestRegressor Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def RF_Year(Setnodata_datas, nn):
     print('——————————————RandomForestRegressor_Year——————————————————')
     start = datetime.datetime.now()
@@ -847,28 +1098,32 @@ def RF_Year(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————RandomForestRegressor_Year Pool Start—————————————————————')
     name_list = ['Predicted'] * len(images_pixels1)
-
     try:
-        mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————RandomForestRegressor_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(), nn, years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(), nn, years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'RandomForestRegressor_Year Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def Vote_RR(Setnodata_datas, nn):
     print('——————————————VoteRegressor RR——————————————————')
     start = datetime.datetime.now()
@@ -879,26 +1134,31 @@ def Vote_RR(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————VoteRegressor_RR Pool Start—————————————————————')
     name_list = ['RR'] * len(images_pixels1)
     try:
-        mean_results = pool.map(Vote_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(Vote_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————VoteRegressor_RR Pool End—————————————————————')
-    mean_results = np.array(mean_results)
-    A_WriteArray([mean_results[:, 0], mean_results[:, 1], mean_results[:, 2], mean_results[:, 3]], nn, var)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    mean_results = np.array(mean_results).astype('float16')
+    A_WriteArray([mean_results[:,i] for i in range(mean_results.shape[1])], nn, var)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'VoteRegressor Task done! Spend-time: {datetime.datetime.now() - start}',
                     display_duration_in_ms=1000, fade_in_duration=1000)
 def Vote_Year(Setnodata_datas, nn):
@@ -911,34 +1171,37 @@ def Vote_Year(Setnodata_datas, nn):
             images_pixels3 = []
             images_pixels6 = []
             for year in range(len(years)):
-                images_pixels3.append([i[year][y][x] for i in Setnodata_datas[:-1]])
+                images_pixels3.append(np.array([i[year][y][x] for i in Setnodata_datas[:-1]]).astype('float16'))
                 images_pixels6.append(Setnodata_datas[-1][year][y][x])
-            images_pixels1.append(images_pixels3)
-            images_pixels5.append(images_pixels6)
+            images_pixels1.append(np.array(images_pixels3).astype('float16'))
+            images_pixels5.append(np.array(images_pixels6).astype('float16'))
     print('————————————————————————————————')
     print('———————————VoteRegressor_Year Pool Start—————————————————————')
     name_list = ['Predicted'] * len(images_pixels1)
-
     try:
-        mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
-        pool.close()
-        pool.join()
-    except:
         pool.restart()
         mean_results = pool.map(RF_R_P, images_pixels1, images_pixels5, name_list)
         pool.close()
         pool.join()
+        #message(nn + '运行成功了hhhhhhh')
+    except:
+        pass #message(nn + '运行报错了,快来看看吧55555')
     print('————————————————————————————————')
     print('———————————VoteRegressor_Year Pool End—————————————————————')
-    A_WriteArray(np.array(mean_results).T.tolist(), nn, years)
+    del images_pixels1
+    del images_pixels5
+    gc.collect()
+    A_WriteArray(np.array(mean_results).astype('float16').T.tolist(), nn, years)
+    del mean_results
+    del Setnodata_datas
+    gc.collect()
     sg.popup_notify(f'VoteRegressor_Year Task done! Spend-time: {datetime.datetime.now() - start}',
-                    display_duration_in_ms=1000, fade_in_duration=1000)
+                    display_duration_in_ms=100, fade_in_duration=100)
 def normalization_Writearray_Spatial(Datas):
     '''
     归一化（空间）
     '''
-    sample_tif = Sample_tif      # 需要读取的tif文件所在的文件夹的所在文件夹的路径
-    ds = gdal.Open(sample_tif)                             # 打开文件
+    ds = gdal.Open(Sample_tif)                             # 打开文件
     for data,na in zip(Datas,na_me2):
         for da,year in zip(data,years):
             max_value = np.nanmax(da)
@@ -960,19 +1223,24 @@ def normalization_Writearray_Spatial(Datas):
             out_ds.SetProjection(ds.GetProjection())                # 投影信息
             out_ds.SetGeoTransform(ds.GetGeoTransform())            # 仿射信息
             out_band = out_ds.GetRasterBand(1)
-            out_band.WriteArray(da.reshape(miny_miny,minx_minx))    # 写入数据 (why)
+            out_band.WriteArray(da.reshape(miny_miny,minx_minx).astype('float16'))    # 写入数据 (why)
+            out_band.SetNoDataValue(-9999)
             out_ds.FlushCache()  #(刷新缓存)
-            del out_ds #删除 
+            del out_ds
+            del da
+            del out_band
+            gc.collect()
             logging.info(f' {outdir + os.sep + "Normal_Spatial_" + na + "_" + str(year) + ".tif"} is  ok   !!!!!!!!')
     del ds
+    del Datas
+    gc.collect()
 def normalization_Writearray_Spatial_time(Datas):
     '''
     归一化（空间和时间）
     '''
-    sample_tif = Sample_tif                         # 需要读取的tif文件所在的文件夹的所在文件夹的路径
-    ds = gdal.Open(sample_tif)                             # 打开文件
-    MuSyQ_min,GLASS_min,MODIS_min,CASA_min,W_min,LAI_min = np.nanmin(Datas[0]),np.nanmin(Datas[1]),np.nanmin(Datas[2]),np.nanmin(Datas[3]),np.nanmin(Datas[4]),np.nanmin(Datas[5])
-    MuSyQ_max,GLASS_max,MODIS_max,CASA_max,W_max,LAI_max = np.nanmax(Datas[0]),np.nanmax(Datas[1]),np.nanmax(Datas[2]),np.nanmax(Datas[3]),np.nanmax(Datas[4]),np.nanmax(Datas[5])
+    ds = gdal.Open(Sample_tif)                             # 打开文件
+    [MuSyQ_min,GLASS_min,MODIS_min,CASA_min,W_min,LAI_min] = [np.nanmin(i) for i in Datas]
+    [MuSyQ_max,GLASS_max,MODIS_max,CASA_max,W_max,LAI_max] = [np.nanmax(i) for i in Datas]
     print('min:',MuSyQ_min,GLASS_min,MODIS_min,CASA_min,W_min,LAI_min)
     print('max:',MuSyQ_max,GLASS_max,MODIS_max,CASA_max,W_max,LAI_max)
     min_max = {'Geodata': {'min':MuSyQ_min,'max':MuSyQ_max},'GLASS':{'min':GLASS_min,'max':GLASS_max},'MODIS':{'min':MODIS_min,'max':MODIS_max},'TPDC':{'min':CASA_min,'max':CASA_max},'W':{'min':W_min,'max':W_max},'LAI':{'min':LAI_min,'max':LAI_max}}
@@ -999,12 +1267,17 @@ def normalization_Writearray_Spatial_time(Datas):
             out_ds.SetProjection(ds.GetProjection())                # 投影信息
             out_ds.SetGeoTransform(ds.GetGeoTransform())            # 仿射信息
             out_band = out_ds.GetRasterBand(1)
-            out_band.WriteArray(da.reshape(miny_miny,minx_minx))    # 写入数据 (why)
+            out_band.WriteArray(da.reshape(miny_miny,minx_minx).astype('float16'))    # 写入数据 (why)
+            out_band.SetNoDataValue(-9999)
             out_ds.FlushCache()  #(刷新缓存)
-            del out_ds #删除 
+            del out_ds #删除
+            del da
+            del out_band
+            gc.collect()
             logging.info(f' {outdir + os.sep + "Normal_SpatialAndTime_" + na + "_" + str(year) + ".tif"} is  ok   !!!!!!!!')
-    del ds 
-    
+    del ds
+    del Datas
+    gc.collect()
 if __name__ == "__main__": 
     print('-----------------Start----------------------')
     print(f'minx_minx: {minx_minx}')
@@ -1031,18 +1304,20 @@ if __name__ == "__main__":
         # W_datas.append(gdal.Open(g(W_dir + os.sep + W_key)[0],gdal.GA_ReadOnly).ReadAsArray(100, 100, 100, 100))
         # LAI_datas.append(gdal.Open(g(LAI_dir + os.sep + LAI_key)[0],gdal.GA_ReadOnly).ReadAsArray(100, 100, 100, 100))
 
-    MuSyQ_datas = np.array(MuSyQ_datas)
-    GLASS_datas = np.array(GLASS_datas)
-    MODIS_datas = np.array(MODIS_datas)
-    CASA_datas = np.array(CASA_datas)
-    W_datas = np.array(W_datas)
-    LAI_datas = np.array(LAI_datas)
+    MuSyQ_datas = np.array(MuSyQ_datas).astype('float16')
+    GLASS_datas = np.array(GLASS_datas).astype('float16')
+    MODIS_datas = np.array(MODIS_datas).astype('float16')
+    CASA_datas = np.array(CASA_datas).astype('float16')
+    W_datas = np.array(W_datas).astype('float16')
+    LAI_datas = np.array(LAI_datas).astype('float16')
 
     pool = newPool(Pools)
-    '''先计算平均值，中值的RR'''
-    # Mean_Median_RR(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Liner_Mean','Liner_Median')
-    '''然后计算每个模型的R2'''
-    # Cal_R2(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
+
+    nor =  normalization(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)))
+    set = SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)
+    # Mean_Median_RR(nor,'Liner_Mean','Liner_Median')
+    # Cal_R2(nor)
+
 
 
     # MuSyQ_r2 = gdal.Open(MuSyQ_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
@@ -1050,40 +1325,46 @@ if __name__ == "__main__":
     # MODIS_r2 = gdal.Open(MODIS_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
     # CASA_r2 = gdal.Open(CASA_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
     # W_r2 = gdal.Open(W_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
-    #
-    # all_R2 = np.array([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2])
-    '''再根据每个模型的R2计算权重的RR'''
-    # Weight_RR(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),R2_SetNodata(all_R2),'Liner_Weight')
 
-    # '''再计算多元回归的RR'''
-    # Multiply_Regression_RR(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Liner_Mul')
-    Bagging_RR(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Liner_Bagging')
-    Ada_RR(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Liner_AdaBoost')
-    Gra_RR(normalization(SetNodata([MuSyQ_datas, GLASS_datas, MODIS_datas, CASA_datas, W_datas, LAI_datas], nodatakey)),'Liner_Gradient')
-    Sta_RR(normalization(SetNodata([MuSyQ_datas, GLASS_datas, MODIS_datas, CASA_datas, W_datas, LAI_datas], nodatakey)),'Liner_Stacking')
-    RF_RR(normalization(SetNodata([MuSyQ_datas, GLASS_datas, MODIS_datas, CASA_datas, W_datas, LAI_datas], nodatakey)),'Liner_Stacking')
-    Vote_RR(normalization(SetNodata([MuSyQ_datas, GLASS_datas, MODIS_datas, CASA_datas, W_datas, LAI_datas], nodatakey)),'Liner_Vote')
-    '''再计算每种方法的每年的值（归一化和没有归一化的）'''
-    # Mean_Median_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Mean_Year','Normal_Median_Year')
-    # Mean_Median_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Mean_Year','Median_Year')
-    # Weight_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Normal_Weight_Year')
-    # Weight_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Weight_Year')
-    # Multiply_Regression_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Multiply_Regression_Year')
-    # Multiply_Regression_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Multiply_Regression_Year')
-    Bagging_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Bagging_Year')
-    Bagging_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Bagging_Year')
-    Ada_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_AdaBoost_Year')
-    Ada_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'AdaBoost_Year')
-    Gra_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Gradient_Year')
-    Gra_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Gradient_Year')
-    Sta_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_Stacking_Year')
-    Sta_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'Stacking_Year')
-    RF_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_RandomForestRegressor_Year')
-    RF_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'RandomForestRegressor_Year')
-    Vote_Year(normalization(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey)),'Normal_VoteRegressor_Year')
-    Vote_Year(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey),'VoteRegressor_Year')
-    # normalization_Writearray_Spatial(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey))
-    # normalization_Writearray_Spatial_time(SetNodata([MuSyQ_datas,GLASS_datas,MODIS_datas,CASA_datas,W_datas,LAI_datas],nodatakey))
+    # all_R2 = np.array([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2])
+    # Weight_RR(nor,R2_SetNodata(all_R2),'Liner_Weight')
+
+    # Multiply_Regression_RR(nor,'Liner_Mul')
+    Bagging_RR(nor,'Liner_Bagging')
+    Ada_RR(nor,'Liner_AdaBoost')
+    #
+    Gra_RR(nor,'Liner_Gradient')
+    #
+    Sta_RR(nor,'Liner_Stacking')
+    RF_RR(nor,'Liner_RandomForestRegressor')
+    #
+    Vote_RR(nor,'Liner_Vote')
+    # '''再计算每种方法的每年的值（归一化和没有归一化的）'''
+    # Mean_Median_Year(nor,'Normal_Mean_Year','Normal_Median_Year')
+    # Mean_Median_Year(set,'Mean_Year','Median_Year')
+    # Weight_Year(nor,R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Normal_Weight_Year')
+    # Weight_Year(set,R2_SetNodata([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2]),'Weight_Year')
+    # Multiply_Regression_Year(nor,'Normal_Multiply_Regression_Year')
+    # Multiply_Regression_Year(set,'Multiply_Regression_Year')
+    Bagging_Year(nor,'Normal_Bagging_Year')
+    Bagging_Year(set,'Bagging_Year')
+    Ada_Year(nor,'Normal_AdaBoost_Year')
+    Ada_Year(set,'AdaBoost_Year')
+    #
+    Gra_Year(nor,'Normal_Gradient_Year')
+    Gra_Year(set,'Gradient_Year')
+    #
+    Sta_Year(nor,'Normal_Stacking_Year')
+    Sta_Year(set,'Stacking_Year')
+    RF_Year(nor,'Normal_RandomForestRegressor_Year')
+    RF_Year(set,'RandomForestRegressor_Year')
+    Vote_Year(nor,'Normal_VoteRegressor_Year')
+    Vote_Year(set,'VoteRegressor_Year')
+    normalization_Writearray_Spatial(set)
+    normalization_Writearray_Spatial_time(set)
+    del nor
+    del set
+    gc.collect()
     sg.popup_notify(title = 'Task done!',display_duration_in_ms = 1000,fade_in_duration = 1000)
 
     
