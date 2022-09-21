@@ -20,6 +20,7 @@ from sklearn import metrics
 from tqdm import tqdm
 import PySimpleGUI as sg
 import pandas as pd
+from scipy.stats import randint
 import numpy as np
 import os
 from sklearn.tree import DecisionTreeRegressor
@@ -46,14 +47,15 @@ Outpath = r'K:\HeQiFan\OUT'
 
 Sample_tif = r'K:\HeQiFan\Sample\Mask_Mul_2009.tif'
 
-MuSyQ_inpath = r'K:\HeQiFan\1Y\Geodata_2000_2017_1y'
-GLASS_inpath = r'K:\HeQiFan\1Y\GLASS_2000_2017_1y'
+MuSyQ_path = r'K:\HeQiFan\1Y\Geodata_2000_2017_1y'
+GLASS_path = r'K:\HeQiFan\1Y\GLASS_2000_2017_1y'
 MODIS_path = r'K:\HeQiFan\1Y\MODIS_2000_2017_1y'
 CASA_path = r'K:\HeQiFan\1Y\TPDC_2000_2017_1y'
 W_path = r'K:\HeQiFan\1Y\W_2000_2017_1y'
 LAI_path = r'K:\HeQiFan\1Y\LAI_2003_2017_1y'
 
-MuSyQ_R2 = r'K:\HeQiFan\OUT\Model_R2\R2_Geodata\R2_Geodata_.tif'  # 每种模型的R2，weight中要用
+# 每种模型的R2，weight中要用
+MuSyQ_R2 = r'K:\HeQiFan\OUT\Model_R2\R2_Geodata\R2_Geodata_.tif'
 GLASS_R2 = r'K:\HeQiFan\OUT\Model_R2\R2_GLASS\R2_GLASS_.tif'
 MODIS_R2 = r'K:\HeQiFan\OUT\Model_R2\R2_MODIS\R2_MODIS_.tif'
 CASA_R2 = r'K:\HeQiFan\OUT\Model_R2\R2_TPDC\R2_TPDC_.tif'
@@ -61,18 +63,18 @@ W_R2 = r'K:\HeQiFan\OUT\Model_R2\R2_W\R2_W_.tif'
 
 MuSyQ_key, GLASS_key, MODIS_key, CASA_key, W_key, LAI_key = 'Mask_*.tif', 'Mask_*.tif', 'Mask_*.tif', 'Mask_*.tif', 'Resample_*.tif', 'Mask_*.tif'  # 关键字
 
-nodatakey = [['<-1000'], ['<-1000'], ['<-1000'], ['<-1000'], ['<-1000'], ['<-1000']]  # 每种模型的无效值
+nodatakey = [['<-1000','<0'], ['<-1000','<0'], ['<-1000','<0'], ['<-1000','<0'], ['<-1000','<0'], ['<-1000','<0']]  # 每种模型的无效值
 
 na_me = ['Geodata', 'GLASS', 'MODIS', 'TPDC', 'W']
 na_me2 = ['Geodata', 'GLASS', 'MODIS', 'TPDC', 'W', 'LAI']
 
-Pools = 8
+Pools = 10  # 进程的数量
 length = 5  # 模型的数量
 styear = 2003  # 开始年份
 edyear = 2017  # 结束年份
 
 minx_minx = 2671   #列数
-miny_miny =  2101  #行数
+miny_miny = 2101  #行数
 
 years = [x for x in range(styear, edyear + 1)]  # 年份的列表
 
@@ -116,14 +118,12 @@ def SetNodata(Datas,nodatakey):
                 value = int(k[1:])  #获取数组
                 if symbol == '>':
                     da[da>=value] = np.nan
-                    da[da<0] = np.nan
                 else:
                     da[da<=value] = np.nan
-                    da[da<0] = np.nan
     return Datas
 def R2_SetNodata(Datas):
     '''
-    设置无效值
+    设置R2的无效值
     '''
     for da in Datas:
         da[da<0] = np.nan
@@ -136,15 +136,13 @@ def SetDatatype(Datas):
     for data in Datas:
         data_ = []
         for da in data:
-            da.dtype = np.uint32
+            da.dtype = np.float32
             data_.append(da)
         datas_.append(data_)
-    del Datas
-    gc.collect()
     return datas_
 def normalization(Datas):
     '''
-    归一化
+    最大最小归一化
     '''
     datas_ = []
     for data in Datas:
@@ -156,8 +154,6 @@ def normalization(Datas):
             data_.append(da)
         data_ = np.array(data_).astype('float32')
         datas_.append(data_)
-    del Datas
-    gc.collect()
     return datas_
 '''Write'''
 def A_WriteArray(datalist,Name,var_list):
@@ -167,7 +163,7 @@ def A_WriteArray(datalist,Name,var_list):
     ds = gdal.Open(Sample_tif)                    # 打开文件
     im_width = minx_minx                          # 获取栅格矩阵的列数
     im_height = miny_miny                         # 获取栅格矩阵的行数                    # 波段的indice起始为1，不为0
-    img_datatype = gdal.GDT_Float32                    # 数据类型
+    img_datatype = gdal.GDT_Float32               # 数据类型
     outdir = Outpath + os.sep + Name
     logging.info(f'-------输出文件夹为 {outdir}---------')
     if not os.path.exists(outdir):       #判断原始文件路劲是否存在,如果不存在就直接退出
@@ -185,67 +181,37 @@ def A_WriteArray(datalist,Name,var_list):
         out_band.WriteArray(np.array(datalist[j]).reshape(miny_miny,minx_minx).astype('float32'))    # 写入数据 (why)
         out_band.SetNoDataValue(-9999)
         out_ds.FlushCache()  #(刷新缓存)
-        del out_ds
-        del out_band
-        gc.collect()
         logging.info(f' {outdir + os.sep + Name + "_" + str(var_list[j]) + ".tif"} is  ok   !!!!!!!!')
-    del ds
-    del datalist
-    gc.collect()
 def M_R_P(mean_data,y_data,r_name):
     '''Get Multiply_Regression_RR or Get Multiply_Regression Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             model = LinearRegression()
             model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
             r2 = r2_score(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del mean_data
-            del y_data
-            del y_predict
-            del r_name
-            gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             model = LinearRegression()
             model.fit(mean_data,y_data.ravel())
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
             return np.array(y_predict_data).astype('float32')
 def Ba_R_P(mean_data, y_data, r_name):
     '''Get Bagging_RR or Get Bagging Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             logging.info('数据有效')
             # model = BaggingRegressor(n_jobs=-1, random_state=123)
@@ -255,31 +221,31 @@ def Ba_R_P(mean_data, y_data, r_name):
 
             model = HalvingGridSearchCV(model, param_distributions,
                                            random_state=123,factor=2,n_jobs = -1).fit(mean_data, y_data.ravel())
-            logging.info(f'-------最佳参数为: {model.best_params_}---------')
-            logging.info(f'-------最佳度量值为: {model.best_score_}---------')
-            logging.info(f'-------最佳模型为: {model.best_estimator_}---------')
-            logging.info(f'-------交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}---------')
-            logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
+            logging.info(f'——————————最佳参数为: {model.best_params_}——————————')
+            logging.info(f'——————————最佳参数为: {model.best_score_}——————————')
+            logging.info(f'——————————最佳模型为: {model.best_estimator_}——————————')
+            logging.info(f'——————————交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}——————————')
+            logging.info(f'——————————实际运行的迭代次数为: {model.n_iterations_}——————————')
             # model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
+            # del model
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             logging.info(f'-------r2为: {r2}---------')
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del mean_data
-            del y_predict
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_predict
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
@@ -295,25 +261,25 @@ def Ba_R_P(mean_data, y_data, r_name):
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             # model.fit(mean_data,y_data.ravel())
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def Ada_R_P(mean_data, y_data, r_name):
     '''Get AdaBoost_RR or Get AdaBoost Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
+    # mean_data = np.array(mean_data).astype('float32')
+    # y_data = np.array(y_data).astype('float32')
     rng = np.random.RandomState(1)
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             logging.info('数据有效')
             model = AdaBoostRegressor(DecisionTreeRegressor(max_depth=4),
@@ -330,26 +296,26 @@ def Ada_R_P(mean_data, y_data, r_name):
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
+            # del model
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             logging.info(f'-------r2为: {r2}---------')
             # mse =  mean_squared_error(y_data, y_predict)
             # mae = mean_absolute_error(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del mean_data
-            del y_predict
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_predict
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
@@ -367,31 +333,31 @@ def Ada_R_P(mean_data, y_data, r_name):
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             model.fit(mean_data,y_data.ravel())
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def Gra_R_P(mean_data, y_data, r_name):
     '''Get Gradient_RR or Get Gradient Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
+    # mean_data = np.array(mean_data).astype('float32')
+    # y_data = np.array(y_data).astype('float32')
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             logging.info('数据有效')
             model = ensemble.GradientBoostingRegressor(random_state = 123)
             param_distributions = {"n_estimators": range(2, 30),
                                    "max_depth": range(2, 20),
                                    "loss":["squared_error", "absolute_error", "huber", "quantile"],
-                                   "criterion":["friedman_mse", "squared_error"]
+                                   "criterion":["squared_error"]
                                    }
             model = HalvingGridSearchCV(model, param_distributions,
                                            random_state=123,factor=2,n_jobs = -1).fit(mean_data, y_data.ravel())
@@ -403,26 +369,26 @@ def Gra_R_P(mean_data, y_data, r_name):
             # model = ensemble.GradientBoostingRegressor(**params)
             # model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
+            # del model
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             logging.info(f'-------r2为: {r2}---------')
             # mse =  mean_squared_error(y_data, y_predict)
             # mae = mean_absolute_error(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del mean_data
-            del y_data
-            del r_name
-            del y_predict
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # del y_predict
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
@@ -430,7 +396,7 @@ def Gra_R_P(mean_data, y_data, r_name):
             param_distributions = {"n_estimators": range(2, 30),
                                    "max_depth": range(2, 20),
                                    "loss": ["squared_error", "absolute_error", "huber", "quantile"],
-                                   "criterion": ["friedman_mse", "squared_error"]
+                                   "criterion": ["squared_error"]
                                    }
             model = HalvingGridSearchCV(model, param_distributions,
                                           random_state=123,factor=2,n_jobs = -1).fit(mean_data, y_data.ravel())
@@ -440,25 +406,25 @@ def Gra_R_P(mean_data, y_data, r_name):
             logging.info(f'-------交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}---------')
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def Sta_R_P(mean_data, y_data, r_name):
     '''Get Stacking_RR or Get Stacking Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
+    # mean_data = np.array(mean_data).astype('float32')
+    # y_data = np.array(y_data).astype('float32')
     estimators = [('lr', RidgeCV()), ('svr', LinearSVR(random_state=42,max_iter=10000))]
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             logging.info('数据有效')
             # model = StackingRegressor(estimators=estimators,final_estimator=RandomForestRegressor(n_estimators=10,random_state=42,n_jobs = -1),n_jobs=-1)
@@ -467,24 +433,24 @@ def Sta_R_P(mean_data, y_data, r_name):
                                       final_estimator=RandomForestRegressor(random_state=42))
             model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
+            # del model
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             logging.info(f'-------r2为: {r2}---------')
             # mse =  mean_squared_error(y_data, y_predict)
             # mae = mean_absolute_error(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del y_predict
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del y_predict
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            gc.collect()
+            # del mean_data
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
@@ -494,31 +460,31 @@ def Sta_R_P(mean_data, y_data, r_name):
                                       final_estimator=RandomForestRegressor(random_state=42))
             model.fit(mean_data,y_data.ravel())
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def RF_R_P(mean_data, y_data, r_name):
     '''Get RandomForestRegressor_RR or Get RandomForestRegressor Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
+    # mean_data = np.array(mean_data).astype('float32')
+    # y_data = np.array(y_data).astype('float32')
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             logging.info('数据有效')
             # model = RandomForestRegressor(n_jobs = -1,random_state=0)
             model = RandomForestRegressor(random_state=0)
             param_distributions = {"n_estimators": range(2, 50),
                                    "max_depth": range(2, 20),
-                                   "criterion":["squared_error", "absolute_error", "poisson"]
+                                   "criterion":["squared_error"]
                                    }
             model = HalvingGridSearchCV(model, param_distributions,
                                            random_state=0,factor=2,n_jobs = -1).fit(mean_data, y_data.ravel())
@@ -529,26 +495,26 @@ def RF_R_P(mean_data, y_data, r_name):
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             # model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
+            # del model
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             logging.info(f'-------r2为: {r2}---------')
             # mse =  mean_squared_error(y_data, y_predict)
             # mae = mean_absolute_error(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del y_predict
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del y_predict
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
@@ -556,7 +522,7 @@ def RF_R_P(mean_data, y_data, r_name):
             model = RandomForestRegressor(random_state=0)
             param_distributions = {"n_estimators": range(2, 50),
                                    "max_depth": range(2, 20),
-                                   "criterion":["squared_error", "absolute_error", "poisson"]
+                                   "criterion":["squared_error"]
                                    }
             model = HalvingGridSearchCV(model, param_distributions,
                                            random_state=0,factor=2,n_jobs = -1).fit(mean_data, y_data.ravel())
@@ -567,31 +533,31 @@ def RF_R_P(mean_data, y_data, r_name):
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             # model.fit(mean_data,y_data.ravel())
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def LCE_R_P(mean_data, y_data, r_name):
     '''Get LCERegressor_RR or Get LCERegressor Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
+    # mean_data = np.array(mean_data).astype('float32')
+    # y_data = np.array(y_data).astype('float32')
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             # model = LCERegressor(random_state=123)
             logging.info('数据有效')
             model = LCERegressor(random_state=123)
             param_distributions = {"n_estimators": range(2, 30),
                                    "max_depth": range(2, 30),
-                                   "criterion":["squared_error", "friedman_mse", "absolute_error", "poisson"]
+                                   "criterion":["squared_error"]
                                    }
             # model.fit(mean_data, y_data.ravel())
             model = HalvingRandomSearchCV(model, param_distributions,
@@ -602,33 +568,33 @@ def LCE_R_P(mean_data, y_data, r_name):
             logging.info(f'-------交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}---------')
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            gc.collect()
+            # del model
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             logging.info(f'-------r2为: {r2}---------')
             # mse =  mean_squared_error(y_data, y_predict)
             # mae = mean_absolute_error(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
-            del y_predict
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del y_predict
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
             model = LCERegressor(random_state=123)
             param_distributions = {"n_estimators": range(2, 20),
                                    "max_depth": range(2, 20),
-                                   "criterion":["squared_error", "friedman_mse", "absolute_error", "poisson"]
+                                   "criterion":["squared_error"]
                                    }
             # model.fit(mean_data, y_data.ravel())
             model = HalvingRandomSearchCV(model, param_distributions,
@@ -640,24 +606,24 @@ def LCE_R_P(mean_data, y_data, r_name):
             logging.info(f'-------实际运行的迭代次数为: {model.n_iterations_}---------')
             # model.fit(mean_data,y_data.ravel())
             y_predict_data = model.predict(mean_data).flatten().tolist()
-            del model
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def Vote_R_P(mean_data, y_data, r_name):
     '''Get Vote_RR or Get Vote Predicted Data'''
-    mean_data = np.array(mean_data).astype('float32')
-    y_data = np.array(y_data).astype('float32')
+    # mean_data = np.array(mean_data).astype('float32')
+    # y_data = np.array(y_data).astype('float32')
     if r_name == 'RR':
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
-            return np.array([-9999, -9999]).astype('float32')
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
+            return np.array([-9999]*len(var)).astype('float32')
         else:
             logging.info('数据有效')
             model1 = GradientBoostingRegressor(random_state=1)
@@ -672,28 +638,28 @@ def Vote_R_P(mean_data, y_data, r_name):
             model = VotingRegressor([('gb', model1), ('rf', model2), ('lr', model3)])
             model.fit(mean_data, y_data.ravel())
             y_predict = model.predict(mean_data).astype('float32')
-            del model
-            del model1
-            del model2
-            del model3
-            gc.collect()
+            # del model
+            # del model1
+            # del model2
+            # del model3
+            # gc.collect()
             r2 = r2_score(y_data, y_predict)
             # mse =  mean_squared_error(y_data, y_predict)
             # mae = mean_absolute_error(y_data, y_predict)
             rmse = sqrt(mean_squared_error(y_data, y_predict))
             logging.info(f'-------r2为: {r2}---------')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([r2, rmse]).astype('float32')
     else:
         if np.isnan(mean_data).any() or np.isnan(y_data).any():
             # logging.info('数据无效')
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array([-9999]*len(years)).astype('float32')
         else:
             logging.info('数据有效')
@@ -711,14 +677,14 @@ def Vote_R_P(mean_data, y_data, r_name):
 
             y_predict_data = model.predict(mean_data).flatten().tolist()
             logging.info(f'————————————————y_predict_data为: {y_predict_data}——————————————————')
-            del model
-            del model1
-            del model2
-            del model3
-            del mean_data
-            del y_data
-            del r_name
-            gc.collect()
+            # del model
+            # del model1
+            # del model2
+            # del model3
+            # del mean_data
+            # del y_data
+            # del r_name
+            # gc.collect()
             return np.array(y_predict_data).astype('float32')
 def L_R(mean_data,y_data,r_name):
     '''Get liner_Regression_R2 or get liner_Regression_RR'''
@@ -729,7 +695,7 @@ def L_R(mean_data,y_data,r_name):
         if r_name == 'R2':
             return np.array([-9999]).astype('float32')
         elif r_name == 'RR':
-            return np.array([-9999, -9999]).astype('float32')
+            return np.array([-9999]*len(var)).astype('float32')
     else:
         logging.info('数据有效')
         # model = linear_model.LinearRegression(n_jobs=-1)
@@ -1543,7 +1509,8 @@ if __name__ == "__main__":
     print(f'miny_miny: {miny_miny}')
 
     for year in tqdm(range(styear, edyear + 1), desc='Year'):
-        MuSyQ_dir, GLASS_dir = MuSyQ_inpath + os.sep + str(year), GLASS_inpath + os.sep + str(year)
+        MuSyQ_dir = MuSyQ_path + os.sep + str(year)
+        GLASS_dir = GLASS_path + os.sep + str(year)
         MODIS_dir = MODIS_path + os.sep + str(year)
         CASA_dir = CASA_path + os.sep + str(year)
         W_dir = W_path + os.sep + str(year)
@@ -1583,7 +1550,7 @@ if __name__ == "__main__":
     # W_r2 = gdal.Open(W_R2,gdal.GA_ReadOnly).ReadAsArray(0, 0, minx_minx, miny_miny)
     # all_R2 = np.array([MuSyQ_r2,GLASS_r2,MODIS_r2,CASA_r2,W_r2])
 
-    # Weight_RR(nor,R2_SetNodata(all_R2),'Liner_Weight')
+    Weight_RR(nor,R2_SetNodata(all_R2),'Liner_Weight')
 
     # Multiply_Regression_RR(nor,'Liner_Mul')
     # Bagging_RR(nor, 'Liner_Bagging')
@@ -1603,17 +1570,17 @@ if __name__ == "__main__":
     # Bagging_Year(nor, 'Normal_Bagging_Year')
     Bagging_Year(set, 'Bagging_Year')
     # Ada_Year(nor, 'Normal_AdaBoost_Year')
-    Ada_Year(set, 'AdaBoost_Year')
+    # Ada_Year(set, 'AdaBoost_Year')
     # Gra_Year(nor, 'Normal_Gradient_Year')
-    Gra_Year(set, 'Gradient_Year')
+    # Gra_Year(set, 'Gradient_Year')
     # Sta_Year(nor, 'Normal_Stacking_Year')
-    Sta_Year(set, 'Stacking_Year')
+    # Sta_Year(set, 'Stacking_Year')
     # RF_Year(nor, 'Normal_RandomForestRegressor_Year')
-    RF_Year(set, 'RandomForestRegressor_Year')
+    # RF_Year(set, 'RandomForestRegressor_Year')
     # LCE_Year(nor, 'Normal_LCERegressor_Year')
-    LCE_Year(set, 'LCERegressor_Year')
+    # LCE_Year(set, 'LCERegressor_Year')
     # Vote_Year(nor, 'Normal_VoteRegressor_Year')
-    Vote_Year(set, 'VoteRegressor_Year')
+    # Vote_Year(set, 'VoteRegressor_Year')
     normalization_Writearray_Spatial(set)
     normalization_Writearray_Spatial_time(set)
     del nor
