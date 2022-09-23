@@ -4,11 +4,12 @@
 from sklearn.experimental import enable_halving_search_cv
 from sklearn.model_selection import HalvingGridSearchCV
 from sklearn.model_selection import HalvingRandomSearchCV
+from sklearn.neural_network import MLPRegressor
+from sklearn.svm import SVR
 from lce import LCERegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import DotProduct, WhiteKernel
 import smtplib
-import PySimpleGUI
-from email.mime.text import MIMEText
-from email.header import Header
 import gc
 from sklearn.ensemble import VotingRegressor
 from sklearn.linear_model import RidgeCV
@@ -21,9 +22,6 @@ from sklearn.inspection import permutation_importance
 from sklearn.ensemble import BaggingRegressor
 from sklearn import metrics
 from tqdm import tqdm
-import PySimpleGUI as sg
-from scipy.stats import randint
-import os
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from sklearn.tree import DecisionTreeRegressor
@@ -44,12 +42,11 @@ from sklearn.linear_model import LinearRegression
 from multiprocessing.dummy import Pool as ThreadPool
 from pathos.multiprocessing import ProcessingPool as newPool
 from sklearn.model_selection import HalvingGridSearchCV
-import os, sys, glob, rasterio
+import os, sys, rasterio
 from osgeo import osr, ogr
 import pandas as pd
 import matplotlib as mpl
 from osgeo import gdal, gdalconst
-
 from scipy import stats
 import numpy as np
 
@@ -57,6 +54,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [*] %(processName)s %(message)s"
 )
+
+
+#绘图前要用到的
 plt.rcParams['font.sans-serif'] = ['SimHei']
 mpl.rcParams['axes.unicode_minus'] = False
 
@@ -66,50 +66,46 @@ MODIS_path = r'E:\Integrated_analysis_data\Data\1Y\MODIS_2000_2017_1y_chinese'
 # CASA_path = r'K:\HeQiFan\1Y\TPDC_2000_2017_1y'
 W_path = r'E:\Integrated_analysis_data\Data\1Y\GLOPEM-CEVSA_1980_2020_1y_chinese'
 # LAI_path = r'K:\HeQiFan\1Y\LAI_2003_2017_1y'
+
 vertify_xlsx = r'E:\Integrated_analysis_data\Data\NPP验证数据\Value.xlsx'
+
 Sample_tif = r'E:\Integrated_analysis_data\Data\Sample\Mask_Mul_1989.tif'
+
 Outpath = r'E:\Integrated_analysis_data\Data\Vertify_out'
 
 MODIS_key, MuSyQ_key, W_key, GLASS_key = 'Mask_*.tif', 'Mask_*.tif', 'RNPP_*.flt', 'Mask_*.tif'
-nodatakey = [['<-1000', '<0'], ['<-1000', '<0'], ['<-1000', '<0'], ['<-1000', '<0']]  # 每种模型的无效值
+nodatakey = [['<-1000', '<0'], ['<-1000', '<0'], ['<-1000', '<0'], ['<-1000', '<0']]
 model_name = ['MODIS', 'MuSyQ', 'GLOPE', 'GLASS']
 
-# patch_size = 500
 styear = 2000  # 开始年份
 edyear = 2017  # 结束年份
-#
-# # length = 5  # 模型的数量
-# x1_range_min = 0
-# x1_range_max = 4000
-# x2_range_min = 1000
-# x2_range_max = 5100
-# x_step = 1000
-# x2_max = 4998
-#
-# y1_range_min = 0
-# y1_range_max = 3000
-# y2_range_min = 1000
-# y2_range_max = 4100
-# y_step = 1000
-# y2_max = 4088
-# minx_minx = 4998   #列数 4998
-# miny_miny = 4088  #行数  4088
-CropSize = 500
-RepetitionRate = 0.1
 
-years = [x for x in range(styear, edyear + 1)]  # 年份的列表
-Pools = 8
+CropSize = 500  #要分割的每个小数据的大小，  n*n
+RepetitionRate = 0.1   #重复率  默认为0.1
+
+years = [x for x in range(styear, edyear + 1)]
+Pools = 8     #进程数
 
 
 
-def readTif(fileName):
+def readTif_Alldata(fileName):
     dataset = gdal.Open(fileName)
-    return dataset
+    width = dataset.RasterXSize  # 宽度是x方向上的size
+    height = dataset.RasterYSize  # 高度是y方向上的size
+    proj = dataset.GetProjection()  # 得到数据集的投影信息
+    geotrans = dataset.GetGeoTransform()  # 得到数据集的地理仿射信息,是一个包含六个元素的元组
+    data = dataset.ReadAsArray(0, 0, width, height)
+    del dataset
+    return width,height,proj,geotrans,data
 
+def readTif_data(fileName):
+    dataset = gdal.Open(fileName)
+    width = dataset.RasterXSize  # 宽度是x方向上的size
+    height = dataset.RasterYSize  # 高度是y方向上的size
+    data = dataset.ReadAsArray(0, 0, width, height)
+    del dataset
+    return data
 def SetNodata(Datas, nodatakey):
-    '''
-    设置无效值
-    '''
     for data, key in zip(Datas, nodatakey):
         for da in data:
             for k in key:
@@ -124,7 +120,7 @@ def SetNodata(Datas, nodatakey):
 
 def Get_Model(x_data, y_data, forest_type):
     x_data = x_data.T.tolist()  # 转为一行一个模型的数据
-    Index = ['Forest_type', 'R2', 'RMSE'] + forest_type
+    Index = ['type', 'R2', 'RMSE'] + forest_type
     model_all = [Index]
     all_r2 = []
     for num, x in enumerate(x_data):
@@ -137,7 +133,6 @@ def Get_Model(x_data, y_data, forest_type):
         # rmse = sqrt(mean_squared_error(y_data, x))
         logging.info(f'-------{model_name[num]}的r2为: {r2}---------')
         logging.info(f'-------{model_name[num]}的rmse为: {rmse}---------')
-        # sg.popup_ok(f'——————{model_name[num]}的r2，rmse 运行完毕————————')
         # Plot outputs
         get_plot(r2, rmse, x, y_data, model_name[num])
         all_r2.append(r2)
@@ -146,26 +141,24 @@ def Get_Model(x_data, y_data, forest_type):
     model_all.append(y_)
     result_data = pd.DataFrame(transposition(model_all))
     result_data.to_excel(Outpath + os.sep + 'Model.xlsx', header=None, index=False)
-    # sg.popup_ok(f'——————Model 运行完毕————————')
     return all_r2
 
-
 def get_plot(r2, rmse, y_predict, y_data, name):
+    '''
+    绘制带有趋势线的散点图
+    '''
     plt.scatter(y_data, y_predict, color="black")
-    # plt.plot(y_predict, y_data, color="blue", linewidth=3)
-    # plt.plot(y_predict, y_data, 'ko')
     parameter = np.polyfit(y_data, y_predict, 1)  # n=1为一次函数，返回函数参数
-    f = np.poly1d(parameter)  # 拼接方程
+    f = np.poly1d(parameter)
     plt.plot(y_data, f(y_data), "r--")
     plt.ylabel(name + '_Predict')
     plt.xlabel('NPP_Station')
     plt.text(x=1, y=1, s=f"R2: {r2}", fontsize=20)
     plt.text(x=1, y=0.9, s=f"RMSE: {rmse}", fontsize=20)
-    # plt.ion()
-    plt.savefig(Outpath + os.sep + name + '_plot.jpg', dpi=600)
-    # plt.pause(3)
+    plt.ion()
+    plt.savefig(Outpath + os.sep + name + '_plot.jpg', dpi=300)
+    # plt.pause(2)
     plt.close()
-
 
 def Weight(x_data, y_data):
     x_data = x_data.T.tolist()  # 转为一行一个模型的数据
@@ -183,7 +176,7 @@ def Weight(x_data, y_data):
         logging.info(f'-------{model_name[num]}的r2为: {r2}---------')
         logging.info(f'-------{model_name[num]}的rmse为: {rmse}---------')
         # Plot outputs
-        # get_plot(r2,rmse,x,y_data,model_name[num])
+        get_plot(r2,rmse,x,y_data,model_name[num])
         y_predict.append(x * r2)
         r2_total += r2
     y_predict = np.array(y_predict).T.sum(axis=1) / r2_total
@@ -202,9 +195,8 @@ def Weight(x_data, y_data):
     # sg.popup_ok(f'——————Weight 运行完毕————————')
     return ['Weight'] + [r2, rmse] + y_predict_data
 
-
 def Mean(x_data, y_data):
-    y_predict = np.mean(x_data, axis=1)
+    y_predict = np.nanmean(x_data, axis=1)
     # r2 = r2_score(y_data, y_predict)
     slope, intercept, r_value, p_value, std_err = stats.linregress(y_predict, y_data)
     # r2 = r2_score(y_data.flatten(), x.flatten(),multioutput='raw_values')
@@ -219,9 +211,8 @@ def Mean(x_data, y_data):
     # sg.popup_ok(f'——————Mean 运行完毕————————')
     return ['Mean'] + [r2, rmse] + y_predict_data
 
-
 def Median(x_data, y_data):
-    y_predict = np.median(x_data, axis=1)
+    y_predict = np.nanmedian(x_data, axis=1)
     # r2 = r2_score(y_data, y_predict)
     slope, intercept, r_value, p_value, std_err = stats.linregress(y_predict, y_data)
     # r2 = r2_score(y_data.flatten(), x.flatten(),multioutput='raw_values')
@@ -235,7 +226,6 @@ def Median(x_data, y_data):
     y_predict_data = y_predict.flatten().tolist()
     # sg.popup_ok(f'——————Median 运行完毕————————')
     return ['Median'] + [r2, rmse] + y_predict_data
-
 
 def Mul(x_data, y_data, patten):
     '''Get Multiply_Regression_RR or Get Multiply_Regression Predicted Data'''
@@ -259,13 +249,11 @@ def Mul(x_data, y_data, patten):
         # sg.popup_ok(f'——————Mul 运行完毕————————')
         return ['Mul'] + [r2, rmse] + y_predict_data
 
-
 def Bagging(x_data, y_data, patten):
     '''Get Bagging_RR or Get Bagging Predicted Data'''
     model = BaggingRegressor(random_state=123)
     param_distributions = {"n_estimators": range(1, 20)}
-    model = HalvingGridSearchCV(model, param_distributions, random_state=123, factor=2, n_jobs=-1).fit(x_data,
-                                                                                                       y_data.ravel())
+    model = HalvingGridSearchCV(model, param_distributions, random_state=123, factor=2, n_jobs=-1).fit(x_data,y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————Bagging model 运行完毕————————')
         return model
@@ -290,17 +278,12 @@ def Bagging(x_data, y_data, patten):
         # sg.popup_ok(f'——————Bagging 运行完毕————————')
         return ['Bagging'] + [r2, rmse] + y_predict_data
 
-
 def AdaBoosting(x_data, y_data, patten):
     '''Get AdaBoost_RR or Get AdaBoost Predicted Data'''
     rng = np.random.RandomState(1)
-    model = AdaBoostRegressor(DecisionTreeRegressor(max_depth=4),
-                              random_state=rng)
-    param_distributions = {"n_estimators": range(1, 10),
-                           "loss": ["linear", "square", "exponential"]
-                           }
-    model = HalvingGridSearchCV(model, param_distributions,
-                                random_state=rng, factor=2, n_jobs=-1).fit(x_data, y_data.ravel())
+    model = AdaBoostRegressor(DecisionTreeRegressor(max_depth=4),random_state=rng)
+    param_distributions = {"n_estimators": range(1, 10),"loss": ["linear", "square", "exponential"]}
+    model = HalvingGridSearchCV(model, param_distributions,random_state=rng, factor=2, n_jobs=-1).fit(x_data, y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————Adaboost model 运行完毕————————')
         return model
@@ -325,17 +308,11 @@ def AdaBoosting(x_data, y_data, patten):
         # sg.popup_ok(f'——————Adaboost 运行完毕————————')
         return ['AdaBoosting'] + [r2, rmse] + y_predict_data
 
-
 def GradientBoosting(x_data, y_data, patten):
     '''Get Gradient_RR or Get Gradient Predicted Data'''
     model = ensemble.GradientBoostingRegressor(random_state=123)
-    param_distributions = {"n_estimators": range(1, 20),
-                           "max_depth": range(1, 20),
-                           "loss": ["squared_error", "absolute_error", "huber", "quantile"],
-                           "criterion": ["squared_error"]
-                           }
-    model = HalvingGridSearchCV(model, param_distributions,
-                                random_state=123, factor=2).fit(x_data, y_data.ravel())
+    param_distributions = {"n_estimators": range(1, 20),"max_depth": range(1, 20),"loss": ["squared_error", "absolute_error", "huber", "quantile"],"criterion": ["squared_error"]}
+    model = HalvingGridSearchCV(model, param_distributions,random_state=123, factor=2).fit(x_data, y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————GradienBoosting model 运行完毕————————')
         return model
@@ -360,12 +337,10 @@ def GradientBoosting(x_data, y_data, patten):
         # sg.popup_ok(f'——————GradienBoosting 运行完毕————————')
         return ['GradientBoosting'] + [r2, rmse] + y_predict_data
 
-
 def Stacking(x_data, y_data, patten):
     '''Get Stacking_RR or Get Stacking Predicted Data'''
-    estimators = [('lr', RidgeCV()), ('svr', LinearSVR(random_state=42, max_iter=10000))]
-    model = StackingRegressor(estimators=estimators,
-                              final_estimator=RandomForestRegressor(random_state=42)).fit(x_data, y_data.ravel())
+    estimators = [('lr', RidgeCV()), ('svr', LinearSVR(random_state=42, max_iter=-1))]
+    model = StackingRegressor(estimators=estimators,final_estimator=RandomForestRegressor(random_state=42)).fit(x_data, y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————Stacking moddel 运行完毕————————')
         return model
@@ -385,13 +360,11 @@ def Stacking(x_data, y_data, patten):
         # sg.popup_ok(f'——————Stacking 运行完毕————————')
         return ['Stacking'] + [r2, rmse] + y_predict_data
 
-
 def RF(x_data, y_data, patten):
     '''Get RandomForestRegressor_RR or Get RandomForestRegressor Predicted Data'''
     model = RandomForestRegressor(random_state=0, n_jobs=-1)
     param_distributions = {"n_estimators": range(1, 10), "max_depth": range(1, 10), "criterion": ["squared_error"]}
-    model = HalvingGridSearchCV(model, param_distributions, random_state=0, factor=2, n_jobs=-1).fit(x_data,
-                                                                                                     y_data.ravel())
+    model = HalvingGridSearchCV(model, param_distributions, random_state=0, factor=2, n_jobs=-1).fit(x_data,y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————RF moddel 运行完毕————————')
         return model
@@ -415,7 +388,6 @@ def RF(x_data, y_data, patten):
         y_predict_data = y_predict.flatten().tolist()
         # sg.popup_ok(f'——————RF 运行完毕————————')
         return ['RF'] + [r2, rmse] + y_predict_data
-
 
 def LCE(x_data, y_data, patten):
     '''Get LCERegressor_RR or Get LCERegressor Predicted Data'''
@@ -446,7 +418,6 @@ def LCE(x_data, y_data, patten):
         y_predict_data = y_predict.flatten().tolist()
         # sg.popup_ok(f'——————LCE 运行完毕————————')
         return ['LCE'] + [r2, rmse] + y_predict_data
-
 
 def Vote(x_data, y_data, patten):
     '''Get Vote_RR or Get Vote Predicted Data'''
@@ -496,7 +467,86 @@ def Vote(x_data, y_data, patten):
         # sg.popup_ok(f'——————Vote 运行完毕————————')
         return ['Vote'] + [r2, rmse] + y_predict_data
 
+def SVR(x_data, y_data, patten):
+    '''Get SVRegressor_RR or Get SVRegressor Predicted Data'''
+    model = SVR(kernel='linear',max_iter= -1)
+    model.fit(x_data, y_data.ravel())
+    if patten == 'fit_tif':
+        # sg.popup_ok(f'——————LCE model 运行完毕————————')
+        return model
+    else:
+        logging.info(f'-------SVR最佳参数为: {model.best_params_}---------')
+        # logging.info(f'-------LCE最佳度量值为: {model.best_score_}---------')
+        # logging.info(f'-------LCE最佳模型为: {model.best_estimator_}---------')
+        # logging.info(f'-------LCE交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}---------')
+        # logging.info(f'-------LCE实际运行的迭代次数为: {model.n_iterations_}---------')
+        y_predict = model.predict(x_data).astype('float32')
+        slope, intercept, r_value, p_value, std_err = stats.linregress(y_predict, y_data)
+        # r2 = r2_score(y_data.flatten(), x.flatten(),multioutput='raw_values')
+        r2 = r_value ** 2
+        logging.info(f'-------SVR的r2为: {r2}---------')
+        # rmse = sqrt(mean_squared_error(y_data, y_predict))
+        mse = np.sum((y_data - y_predict) ** 2) / len(y_data)
+        rmse = sqrt(mse)
+        logging.info(f'-------SVR的rmse为: {rmse}---------')
+        get_plot(r2, rmse, y_predict, y_data, 'SVR')
+        y_predict_data = y_predict.flatten().tolist()
+        # sg.popup_ok(f'——————LCE 运行完毕————————')
+        return ['SVR'] + [r2, rmse] + y_predict_data
 
+def Gauss(x_data, y_data, patten):
+    '''Get SVRegressor_RR or Get SVRegressor Predicted Data'''
+    kernel = DotProduct() + WhiteKernel()
+    model = GaussianProcessRegressor(kernel=kernel, random_state=0).fit(x_data, y_data.ravel())
+    if patten == 'fit_tif':
+        # sg.popup_ok(f'——————LCE model 运行完毕————————')
+        return model
+    else:
+        logging.info(f'-------Gauss最佳参数为: {model.best_params_}---------')
+        # logging.info(f'-------LCE最佳度量值为: {model.best_score_}---------')
+        # logging.info(f'-------LCE最佳模型为: {model.best_estimator_}---------')
+        # logging.info(f'-------LCE交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}---------')
+        # logging.info(f'-------LCE实际运行的迭代次数为: {model.n_iterations_}---------')
+        y_predict = model.predict(x_data).astype('float32')
+        slope, intercept, r_value, p_value, std_err = stats.linregress(y_predict, y_data)
+        # r2 = r2_score(y_data.flatten(), x.flatten(),multioutput='raw_values')
+        r2 = r_value ** 2
+        logging.info(f'-------Gauss的r2为: {r2}---------')
+        # rmse = sqrt(mean_squared_error(y_data, y_predict))
+        mse = np.sum((y_data - y_predict) ** 2) / len(y_data)
+        rmse = sqrt(mse)
+        logging.info(f'-------Gauss的rmse为: {rmse}---------')
+        get_plot(r2, rmse, y_predict, y_data, 'Gauss')
+        y_predict_data = y_predict.flatten().tolist()
+        # sg.popup_ok(f'——————LCE 运行完毕————————')
+        return ['Gauss'] + [r2, rmse] + y_predict_data
+
+
+def MLP(x_data, y_data, patten):
+    '''Get SVRegressor_RR or Get SVRegressor Predicted Data'''
+    model = MLPRegressor(solver='lbfgs', random_state=1, max_iter=10000).fit(x_data, y_data.ravel())
+    if patten == 'fit_tif':
+        # sg.popup_ok(f'——————LCE model 运行完毕————————')
+        return model
+    else:
+        logging.info(f'-------MLP最佳参数为: {model.best_params_}---------')
+        # logging.info(f'-------LCE最佳度量值为: {model.best_score_}---------')
+        # logging.info(f'-------LCE最佳模型为: {model.best_estimator_}---------')
+        # logging.info(f'-------LCE交叉验证拆分（折叠/迭代）的次数为: {model.n_splits_}---------')
+        # logging.info(f'-------LCE实际运行的迭代次数为: {model.n_iterations_}---------')
+        y_predict = model.predict(x_data).astype('float32')
+        slope, intercept, r_value, p_value, std_err = stats.linregress(y_predict, y_data)
+        # r2 = r2_score(y_data.flatten(), x.flatten(),multioutput='raw_values')
+        r2 = r_value ** 2
+        logging.info(f'-------MLP的r2为: {r2}---------')
+        # rmse = sqrt(mean_squared_error(y_data, y_predict))
+        mse = np.sum((y_data - y_predict) ** 2) / len(y_data)
+        rmse = sqrt(mse)
+        logging.info(f'-------MLP的rmse为: {rmse}---------')
+        get_plot(r2, rmse, y_predict, y_data, 'MLP')
+        y_predict_data = y_predict.flatten().tolist()
+        # sg.popup_ok(f'——————LCE 运行完毕————————')
+        return ['MLP'] + [r2, rmse] + y_predict_data
 def transposition(list_two_dimension):
     # b = tuple(zip(*list_two_dimension))
     # c = list(zip(*list_two_dimension))
@@ -516,11 +566,17 @@ def Fit_Station(x_data, y_data, forest_type):
     RF_data = RF(x_data, y_data, 'fit_station')
     LCE_data = LCE(x_data, y_data, 'fit_station')
     Vote_data = Vote(x_data, y_data, 'fit_station')
-    Index = ['Forest_type', 'R2', 'RMSE'] + forest_type
+    # SVR_data = SVR(x_data, y_data, 'fit_station')
+    # Gauss_data = Gauss(x_data, y_data, 'fit_station')
+    # MLP_data = MLP(x_data, y_data, 'fit_station')
+    Index = ['type', 'R2', 'RMSE'] + forest_type
     y_ = ['Station', np.nan, np.nan] + y_data.flatten().tolist()
     result_data = transposition(
         [Index, Mean_data, Median_data, Weight_data, Mul_data, Bagging_data, AdaBoosting_data, GraBoosting_data,
          Staking_data, RF_data, LCE_data, Vote_data, y_])
+    # result_data = transposition(
+    #     [Index, Mean_data, Median_data, Weight_data, Mul_data, Bagging_data, AdaBoosting_data, GraBoosting_data,
+    #      Staking_data, RF_data, LCE_data, Vote_data, SVR_data,Gauss_data,MLP_data,y_])
     result_data = pd.DataFrame(result_data)
     result_data.to_excel(Outpath + os.sep + 'result.xlsx', header=None, index=False)
 
@@ -588,7 +644,6 @@ def Predicted(model, x_data):
         y_predict_data.append(y_predict)
     return np.array(y_predict_data).astype('float16')
 
-
 def get_Ensemble_model(x_data,y_data):
     Mul_model = Mul(x_data,y_data,'fit_tif')
     Bagging_model = Bagging(x_data, y_data,'fit_tif')
@@ -596,8 +651,15 @@ def get_Ensemble_model(x_data,y_data):
     GraBoosting_model = GradientBoosting(x_data, y_data,'fit_tif')
     Staking_model = Stacking(x_data, y_data,'fit_tif')
     RF_model = RF(x_data, y_data,'fit_tif')
+    # SVR_model = SVR(x_data, y_data, 'fit_tif')
+    # Gauss_model = Gauss(x_data, y_data, 'fit_tif')
+    MLP_model = MLP(x_data, y_data, 'fit_tif')
     # LCE_model = LCE(x_data, y_data,'fit_tif')
     # Vote_mdoel = Vote(x_data, y_data,'fit_tif')
+    # return {'Mul_model':Mul_model,'Bagging_model':Bagging_model,
+    #         'AdaBoosting_model':AdaBoosting_model,'GraBoosting_model':GraBoosting_model,
+    #         'Staking_model':Staking_model,'RF_model':RF_model,'SVR_model':SVR_model,'Gauss_model':Gauss_model,
+    #         'MLP_model':MLP_model,'LCE_model':LCE_model,'Vote_mdoel':Vote_mdoel}
     return {'Mul_model':Mul_model,'Bagging_model':Bagging_model,
             'AdaBoosting_model':AdaBoosting_model,'GraBoosting_model':GraBoosting_model,
             'Staking_model':Staking_model,'RF_model':RF_model}
@@ -638,88 +700,39 @@ def Fit_Station_tif(Setnodata_datas, all_r2, n, width, height,Ensemble_models,lo
     Fit_tif(Ensemble_models['GraBoosting_model'],images_pixels_x,'GradientBoosting',n,width,height,local_geotrans, proj)
     Fit_tif(Ensemble_models['Staking_model'], images_pixels_x, 'Stacking',n,width,height,local_geotrans, proj)
     Fit_tif(Ensemble_models['RF_model'], images_pixels_x, 'RF',n,width,height,local_geotrans, proj)
+    # Fit_tif(Ensemble_models['SVR_model'], images_pixels_x, 'SVR', n, width, height, local_geotrans, proj)
+    # Fit_tif(Ensemble_models['Gauss_model'], images_pixels_x, 'Gauss', n, width, height, local_geotrans, proj)
+    # Fit_tif(Ensemble_models['MLP_model'], images_pixels_x, 'MLP', n, width, height, local_geotrans, proj)
     # Fit_tif(Ensemble_models['LCE_model'], images_pixels_x, 'LCERegressor',n,local_geotrans, proj)
     # Fit_tif(Ensemble_models['Vote_mdoel'], images_pixels_x, 'Vote',n,local_geotrans, proj)
     del images_pixels_x
     del Setnodata_datas
     gc.collect()
 
-
-if __name__ == "__main__":
-    vertify_npp = pd.read_excel(vertify_xlsx)
-    vertify_clear = vertify_npp[vertify_npp['Mean_GLOPE'] != 0]
-    vertify_clear = vertify_clear[vertify_clear['Mean_MODIS'] != -9999]
-    vertify_clear = vertify_clear.groupby("Forest").mean()
-    forest_type = list(vertify_clear.index)
-    logging.info('\n')
-    x_data_ = np.array(vertify_clear[['Mean_MODIS', 'Mean_MuSyQ', 'Mean_GLOPE', 'Mean_GLASS']])
-    y_data_ = np.array(vertify_clear['NPP__t_ha_']).ravel()
-
-    all_r2 = Get_Model(x_data_, y_data_, forest_type)  # 返回所有模型的R2->列表
-    Ensemble_models = get_Ensemble_model(x_data_,y_data_)
-    # Fit_Station(x_data_,y_data_,forest_type)   #站点数据的拟合->输出基本模型和集成分析的预测数据在站点上的R2，RMSE，以及预测值
-
-    # logging.info('\n')
-    # logging.info('-----------------Start----------------------')
-    # data = GRID().load_image(Sample_tif)
-    # height, width = data.shape
-    # logging.info(f'----------------height: {height}----------------------')
-    # logging.info(f'----------------width: {width}----------------------')
-    # del data
-    # num = 0
-    # for i in range(width // patch_size):
-    #     for j in range(height // patch_size):
-    #         MuSyQ_datas, GLASS_datas, MODIS_datas, W_datas = [], [], [], []  # 定义空的列表，存放每年的数据
-    #         for year in range(styear, edyear + 1):
-    #             MuSyQ_proj, MuSyQ_geotrans,MuSyQ_data = GRID().load_image(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0])
-    #             MuSyQ_datas.append(MuSyQ_data[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size])
-    #
-    #             GLASS_proj, GLASS_geotrans,GLASS_data = GRID().load_image(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0])
-    #             GLASS_datas.append(GLASS_data[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size])
-    #
-    #             MODIS_data = GRID().load_image(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0])
-    #             MODIS_datas.append(MODIS_data[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size])
-    #
-    #             W_data = GRID().load_image(g(W_path + os.sep + str(year) + os.sep + W_key)[0])
-    #             W_datas.append(W_data[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size])
-    #
-    #             he = MuSyQ_data[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size].shape[0]
-    #             wi = MuSyQ_data[i * patch_size:(i + 1) * patch_size, j * patch_size:(j + 1) * patch_size].shape[1]
-    #             logging.info(f'----------------clip_height: {he}----------------------')
-    #             logging.info(f'----------------clip_width:  {wi}----------------------')
-    #
-            # MuSyQ_datas = np.array(MuSyQ_datas).astype('float16')
-            # GLASS_datas = np.array(GLASS_datas).astype('float16')
-            # MODIS_datas = np.array(MODIS_datas).astype('float16')
-            # W_datas = np.array(W_datas).astype('float16')
-            #
-            # setnodata = SetNodata([MODIS_datas, MuSyQ_datas, W_datas, GLASS_datas], nodatakey)
-            # Fit_Station_tif(setnodata, all_r2, num, wi, he,Ensemble_models)
-    #         num += 1
-
-    dataset_img = readTif(Sample_tif)  # 首先读取文件，采用gdal.open的方法
-    width = dataset_img.RasterXSize  # 宽度是x方向上的size
-    height = dataset_img.RasterYSize  # 高度是y方向上的size
-    proj = dataset_img.GetProjection()  # 得到数据集的投影信息
-    geotrans = dataset_img.GetGeoTransform()  # 得到数据集的地理仿射信息,是一个包含六个元素的元组
-    new_name = 0  # os.listdir(path)将path里面的文件夹列出来，os是operating system
+def clip_total():
+    global new_name
+    global height
+    global width
+    global RepetitionRate
+    global CropSize
+    global geotrans
     for i in range(int((height - CropSize * RepetitionRate) / (CropSize * (1 - RepetitionRate)))):  # 有重复率的裁减时，这个公式判断按照总高度height一共裁剪出多少幅图像 int函数将结果向下取整
         for j in range(int((width - CropSize * RepetitionRate) / (CropSize * (1 - RepetitionRate)))):  # 有重复率的裁剪时，按宽度一共裁剪出多少幅图像
             #  如果图像是单波段
             local_geotrans = list(geotrans)  # 每一张裁剪图的本地放射变化参数，0，3代表左上角坐标
-
-            local_geotrans[0] = geotrans[0] + int(j * CropSize * (1 - RepetitionRate)) * geotrans[
-                1]  # 分别更新为裁剪后的每一张局部图的左上角坐标，为滑动过的像素数量乘以分辨率
+            local_geotrans[0] = geotrans[0] + int(j * CropSize * (1 - RepetitionRate)) * geotrans[1]  # 分别更新为裁剪后的每一张局部图的左上角坐标，为滑动过的像素数量乘以分辨率
             local_geotrans[3] = geotrans[3] + int(i * CropSize * (1 - RepetitionRate)) * geotrans[5]
-
             local_geotrans = tuple(local_geotrans)
-
             MuSyQ_datas, GLASS_datas, MODIS_datas, W_datas = [], [], [], []
+            if new_name <= 57:
+                new_name += 1
+                print(f'{new_name} continue')
+                continue
             for year in range(styear, edyear + 1):
-                MuSyQ_img = readTif(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0]).ReadAsArray(0, 0,width,height)
-                GLASS_img = readTif(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0]).ReadAsArray(0, 0,width,height)
-                MODIS_img = readTif(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0]).ReadAsArray(0, 0,width,height)
-                W_img     = readTif(g(W_path + os.sep + str(year) + os.sep + W_key)[0]).ReadAsArray(0, 0, width, height)
+                MuSyQ_img = readTif_data(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0])
+                GLASS_img = readTif_data(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0])
+                MODIS_img = readTif_data(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0])
+                W_img     = readTif_data(g(W_path + os.sep + str(year) + os.sep + W_key)[0])
 
                 x1 = int(i * CropSize * (1 - RepetitionRate))
                 x2 = int(i * CropSize * (1 - RepetitionRate)) + CropSize
@@ -733,13 +746,17 @@ if __name__ == "__main__":
 
                 wi = MuSyQ_img[x1: x2,y1: y2].shape[1]
                 he = MuSyQ_img[x1: x2, y1: y2].shape[0]
-            MuSyQ_datas = np.array(MuSyQ_datas).astype('float16')
-            GLASS_datas = np.array(GLASS_datas).astype('float16')
-            MODIS_datas = np.array(MODIS_datas).astype('float16')
-            W_datas = np.array(W_datas).astype('float16')
-            setnodata = SetNodata([MODIS_datas, MuSyQ_datas, W_datas, GLASS_datas], nodatakey)
+            setnodata = SetNodata([np.array(MODIS_datas).astype('float16'), np.array(MuSyQ_datas).astype('float16'),
+                                    np.array(W_datas).astype('float16'), np.array(GLASS_datas).astype('float16')], nodatakey)
             Fit_Station_tif(setnodata, all_r2, new_name, wi, he,Ensemble_models,local_geotrans, proj)
             new_name += 1
+def clip_end_x():
+    global new_name
+    global height
+    global width
+    global RepetitionRate
+    global CropSize
+    global geotrans
     for i in range(int((height - CropSize * RepetitionRate) / (CropSize * (1 - RepetitionRate)))):
         local_geotrans = list(geotrans)
         local_geotrans[0] = geotrans[0] + (width - CropSize) * geotrans[1]
@@ -747,10 +764,10 @@ if __name__ == "__main__":
         local_geotrans = tuple(local_geotrans)
         MuSyQ_datas, GLASS_datas, MODIS_datas, W_datas = [], [], [], []
         for year in range(styear, edyear + 1):
-            MuSyQ_img = readTif(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0]).ReadAsArray(0, 0, width,height)
-            GLASS_img = readTif(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0]).ReadAsArray(0, 0, width,height)
-            MODIS_img = readTif(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0]).ReadAsArray(0, 0, width,height)
-            W_img = readTif(g(W_path + os.sep + str(year) + os.sep + W_key)[0]).ReadAsArray(0, 0, width, height)
+            MuSyQ_img = readTif_data(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0])
+            GLASS_img = readTif_data(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0])
+            MODIS_img = readTif_data(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0])
+            W_img = readTif_data(g(W_path + os.sep + str(year) + os.sep + W_key)[0])
 
             x1 = int(i * CropSize * (1 - RepetitionRate))
             x2 = int(i * CropSize * (1 - RepetitionRate)) + CropSize
@@ -763,14 +780,17 @@ if __name__ == "__main__":
             W_datas.append(W_img[x1: x2, y1: y2])
             wi = MuSyQ_img[x1: x2, y1: y2].shape[1]
             he = MuSyQ_img[x1: x2, y1: y2].shape[0]
-        MuSyQ_datas = np.array(MuSyQ_datas).astype('float16')
-        GLASS_datas = np.array(GLASS_datas).astype('float16')
-        MODIS_datas = np.array(MODIS_datas).astype('float16')
-        W_datas = np.array(W_datas).astype('float16')
-        setnodata = SetNodata([MODIS_datas, MuSyQ_datas, W_datas, GLASS_datas], nodatakey)
-        Fit_Station_tif(setnodata, all_r2, new_name, wi, he,Ensemble_models,local_geotrans, proj)
+        setnodata = SetNodata([np.array(MODIS_datas).astype('float16'), np.array(MuSyQ_datas).astype('float16'),
+                                np.array(W_datas).astype('float16'), np.array(GLASS_datas).astype('float16')], nodatakey)
+        Fit_Station_tif(setnodata, all_r2, new_name, wi, he, Ensemble_models, local_geotrans, proj)
         new_name += 1
-
+def clip_end_y():
+    global new_name
+    global height
+    global width
+    global RepetitionRate
+    global CropSize
+    global geotrans
     for j in range(int((width - CropSize * RepetitionRate) / (CropSize * (1 - RepetitionRate)))):
         local_geotrans = list(geotrans)
         local_geotrans[0] = geotrans[0] + int(j * CropSize * (1 - RepetitionRate)) * geotrans[1]
@@ -778,10 +798,10 @@ if __name__ == "__main__":
         local_geotrans = tuple(local_geotrans)
         MuSyQ_datas, GLASS_datas, MODIS_datas, W_datas = [], [], [], []
         for year in range(styear, edyear + 1):
-            MuSyQ_img = readTif(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0]).ReadAsArray(0, 0, width,height)
-            GLASS_img = readTif(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0]).ReadAsArray(0, 0, width,height)
-            MODIS_img = readTif(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0]).ReadAsArray(0, 0, width,height)
-            W_img = readTif(g(W_path + os.sep + str(year) + os.sep + W_key)[0]).ReadAsArray(0, 0, width, height)
+            MuSyQ_img = readTif_data(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0])
+            GLASS_img = readTif_data(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0])
+            MODIS_img = readTif_data(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0])
+            W_img = readTif_data(g(W_path + os.sep + str(year) + os.sep + W_key)[0])
 
             x1 = (height - CropSize)
             x2 = height
@@ -794,15 +814,17 @@ if __name__ == "__main__":
             W_datas.append(W_img[x1: x2, y1: y2])
             wi = MuSyQ_img[x1: x2, y1: y2].shape[1]
             he = MuSyQ_img[x1: x2, y1: y2].shape[0]
-        MuSyQ_datas = np.array(MuSyQ_datas).astype('float16')
-        GLASS_datas = np.array(GLASS_datas).astype('float16')
-        MODIS_datas = np.array(MODIS_datas).astype('float16')
-        W_datas = np.array(W_datas).astype('float16')
-        setnodata = SetNodata([MODIS_datas, MuSyQ_datas, W_datas, GLASS_datas], nodatakey)
+        setnodata = SetNodata([np.array(MODIS_datas).astype('float16'), np.array(MuSyQ_datas).astype('float16'),
+                                np.array(W_datas).astype('float16'), np.array(GLASS_datas).astype('float16')], nodatakey)
         Fit_Station_tif(setnodata, all_r2, new_name, wi, he,Ensemble_models,local_geotrans, proj)
         new_name += 1
-
-
+def clip_end_xy():
+    global new_name
+    global height
+    global width
+    global RepetitionRate
+    global CropSize
+    global geotrans
     local_geotrans = list(geotrans)
     local_geotrans[0] = geotrans[0] + (width - CropSize) * geotrans[1]
     local_geotrans[3] = geotrans[3] + (height - CropSize) * geotrans[5]
@@ -810,10 +832,10 @@ if __name__ == "__main__":
     MuSyQ_datas, GLASS_datas, MODIS_datas, W_datas = [], [], [], []
 
     for year in range(styear, edyear + 1):
-        MuSyQ_img = readTif(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0]).ReadAsArray(0, 0, width, height)
-        GLASS_img = readTif(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0]).ReadAsArray(0, 0, width, height)
-        MODIS_img = readTif(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0]).ReadAsArray(0, 0, width, height)
-        W_img = readTif(g(W_path + os.sep + str(year) + os.sep + W_key)[0]).ReadAsArray(0, 0, width, height)
+        MuSyQ_img = readTif_data(g(MuSyQ_path + os.sep + str(year) + os.sep + MuSyQ_key)[0])
+        GLASS_img = readTif_data(g(GLASS_path + os.sep + str(year) + os.sep + GLASS_key)[0])
+        MODIS_img = readTif_data(g(MODIS_path + os.sep + str(year) + os.sep + MODIS_key)[0])
+        W_img = readTif_data(g(W_path + os.sep + str(year) + os.sep + W_key)[0])
 
         x1 = (height - CropSize)
         x2 = height
@@ -826,12 +848,34 @@ if __name__ == "__main__":
         W_datas.append(W_img[x1: x2, y1: y2])
         wi = MuSyQ_img[x1: x2, y1: y2].shape[1]
         he = MuSyQ_img[x1: x2, y1: y2].shape[0]
-    MuSyQ_datas = np.array(MuSyQ_datas).astype('float16')
-    GLASS_datas = np.array(GLASS_datas).astype('float16')
-    MODIS_datas = np.array(MODIS_datas).astype('float16')
-    W_datas = np.array(W_datas).astype('float16')
+
+    setnodata = SetNodata([np.array(MODIS_datas).astype('float16'), np.array(MuSyQ_datas).astype('float16'),
+                            np.array(W_datas).astype('float16'), np.array(GLASS_datas).astype('float16')], nodatakey)
     setnodata = SetNodata([MODIS_datas, MuSyQ_datas, W_datas, GLASS_datas], nodatakey)
     Fit_Station_tif(setnodata, all_r2, new_name, wi, he,Ensemble_models,local_geotrans, proj)
     new_name += 1
 
+if __name__ == "__main__":
+    vertify_npp = pd.read_excel(vertify_xlsx)
+    vertify_clear = vertify_npp[vertify_npp['Mean_GLOPE'] != 0]
+    vertify_clear = vertify_clear[vertify_clear['Mean_MODIS'] != -9999]
+    vertify_clear = vertify_clear.groupby("Forest").mean()
+    forest_type = list(vertify_clear.index)
+    logging.info('\n')
+    x_data_ = np.array(vertify_clear[['Mean_MODIS', 'Mean_MuSyQ', 'Mean_GLOPE', 'Mean_GLASS']])
+    y_data_ = np.array(vertify_clear['NPP__t_ha_']).ravel()
 
+    all_r2 = Get_Model(x_data_, y_data_, forest_type)  # 返回所有模型的R2->列表
+
+    Ensemble_models = get_Ensemble_model(x_data_,y_data_)
+
+    # Fit_Station(x_data_,y_data_,forest_type)   #站点数据的拟合->输出基本模型和集成分析的预测数据在站点上的R2，RMSE，以及预测值
+
+    width,height,proj,geotrans,data = readTif_Alldata(Sample_tif)  # 首先读取文件，采用gdal.open的方法
+
+    new_name = 0
+
+    clip_total()
+    clip_end_x()
+    clip_end_y()
+    clip_end_xy()
