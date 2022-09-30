@@ -1,6 +1,4 @@
 # -- coding: utf-8 --
-# -- coding: utf-8 --
-# -- coding: utf-8 --
 from sklearn.experimental import enable_halving_search_cv
 from sklearn.model_selection import HalvingGridSearchCV
 from sklearn.model_selection import HalvingRandomSearchCV
@@ -27,10 +25,12 @@ import matplotlib as mpl
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import AdaBoostRegressor
 
-plt.switch_backend('agg')
-# import matplotlib; matplotlib.use('TkAgg')
+# plt.switch_backend('agg')
+import matplotlib; matplotlib.use('TkAgg')
 import sklearn
 from glob import glob as g
+import datashader as ds
+from datashader.mpl_ext import dsshow
 from osgeo import gdal
 import datetime
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
@@ -67,7 +67,7 @@ MODIS_path = r'E:\Integrated_analysis_data\Data\1Y\MODIS_2000_2017_1y_chinese'
 W_path = r'E:\Integrated_analysis_data\Data\1Y\GLOPEM-CEVSA_1980_2020_1y_chinese'
 # LAI_path = r'K:\HeQiFan\1Y\LAI_2003_2017_1y'
 
-vertify_xlsx = r'E:\Integrated_analysis_data\Data\NPP验证数据\Value.xlsx'
+vertify_xlsx = r'E:\Integrated_analysis_data\Data\NPP验证数据\Grass_tif.csv'
 
 Sample_tif = r'E:\Integrated_analysis_data\Data\Sample\Mask_Mul_1989.tif'
 
@@ -80,13 +80,53 @@ model_name = ['MODIS', 'MuSyQ', 'GLOPE', 'GLASS']
 styear = 2000  # 开始年份
 edyear = 2017  # 结束年份
 
-CropSize = 500  #要分割的每个小数据的大小，  n*n
+CropSize = 1000  #要分割的每个小数据的大小，  n*n
 RepetitionRate = 0.1   #重复率  默认为0.1
 
 years = [x for x in range(styear, edyear + 1)]
 Pools = 8     #进程数
 
 
+def Curve_Fitting(x,y,deg):
+    parameter = np.polyfit(x, y, deg)    #拟合deg次多项式
+    p = np.poly1d(parameter)             #拟合deg次多项式
+    aa=''                               #方程拼接  ——————————————————
+    for i in range(deg+1):
+        bb=round(parameter[i],2)
+        if bb>0:
+            if i==0:
+                bb=str(bb)
+            else:
+                bb='+'+str(bb)
+        else:
+            bb=str(bb)
+        if deg==i:
+            aa=aa+bb
+        else:
+            aa=aa+bb+'x^'+str(deg-i)    #方程拼接  ——————————————————
+    plt.scatter(x, y)     #原始数据散点图
+    plt.plot(x, p(x), color='g')  # 画拟合曲线
+   # plt.text(-1,0,aa,fontdict={'size':'10','color':'b'})
+    plt.legend([aa,round(np.corrcoef(y, p(x))[0,1]**2,2)])   #拼接好的方程和R方放到图例
+    plt.show()
+#    print('曲线方程为：',aa)
+#    print('     r^2为：',round(np.corrcoef(y, p(x))[0,1]**2,2))
+
+def using_datashader(ax, x, y,max_name):
+
+    df = pd.DataFrame(dict(x=x, y=y))
+    dsartist = dsshow(
+        df,
+        ds.Point("x", "y"),
+        ds.count(),
+        vmin=0,
+        vmax=200,
+        norm="linear",
+        aspect="auto",
+        ax=ax,
+    )
+
+    plt.colorbar(dsartist)
 
 def readTif_Alldata(fileName):
     dataset = gdal.Open(fileName)
@@ -140,25 +180,32 @@ def Get_Model(x_data, y_data, forest_type):
     y_ = ['Station', np.nan, np.nan] + y_data.flatten().tolist()
     model_all.append(y_)
     result_data = pd.DataFrame(transposition(model_all))
-    result_data.to_excel(Outpath + os.sep + 'Model.xlsx', header=None, index=False)
+    result_data.to_csv(Outpath + os.sep + 'Model_grass.csv', header=None, index=False)
     return all_r2
 
 def get_plot(r2, rmse, y_predict, y_data, name):
     '''
     绘制带有趋势线的散点图
     '''
-    plt.scatter(y_data, y_predict, color="black")
+    fig, ax = plt.subplots()
+    max_name = max(y_predict)
+    using_datashader(ax, y_data, y_predict,max_name)
+    plt.title(name)
+    # plt.scatter(y_data, y_predict, color="black")
+    # Curve_Fitting(y_data,y_predict,1)
     parameter = np.polyfit(y_data, y_predict, 1)  # n=1为一次函数，返回函数参数
     f = np.poly1d(parameter)
     plt.plot(y_data, f(y_data), "r--")
     plt.ylabel(name + '_Predict')
     plt.xlabel('NPP_Station')
-    plt.text(x=1, y=1, s=f"R2: {r2}", fontsize=20)
-    plt.text(x=1, y=0.9, s=f"RMSE: {rmse}", fontsize=20)
+    plt.legend(['r2: '+ str(round(r2,3)) + ' ' + 'rmse: '+ str(int(rmse))])
     plt.ion()
-    plt.savefig(Outpath + os.sep + name + '_plot.jpg', dpi=300)
+    # plt.text(x=1, y=1, s=f"R2: {r2}", fontsize=20)
+    # plt.text(x=1, y=0.9, s=f"RMSE: {rmse}", fontsize=20)
+    # plt.ion()
+    # plt.savefig(Outpath + os.sep + name + '_plot.jpg', dpi=300)
     # plt.pause(2)
-    plt.close()
+    # plt.close()
 
 def Weight(x_data, y_data):
     x_data = x_data.T.tolist()  # 转为一行一个模型的数据
@@ -467,9 +514,10 @@ def Vote(x_data, y_data, patten):
         # sg.popup_ok(f'——————Vote 运行完毕————————')
         return ['Vote'] + [r2, rmse] + y_predict_data
 
-def SVR(x_data, y_data, patten):
+def SVRR(x_data, y_data, patten):
     '''Get SVRegressor_RR or Get SVRegressor Predicted Data'''
-    model = SVR(kernel='linear',max_iter= -1)
+    model = SVR(kernel='linear',max_iter= 1000, C = 1.0)
+    # model = SVR()
     model.fit(x_data, y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————LCE model 运行完毕————————')
@@ -524,7 +572,7 @@ def Gauss(x_data, y_data, patten):
 
 def MLP(x_data, y_data, patten):
     '''Get SVRegressor_RR or Get SVRegressor Predicted Data'''
-    model = MLPRegressor(solver='lbfgs', random_state=1, max_iter=10000).fit(x_data, y_data.ravel())
+    model = MLPRegressor(solver='lbfgs', random_state=1, max_iter=1000).fit(x_data, y_data.ravel())
     if patten == 'fit_tif':
         # sg.popup_ok(f'——————LCE model 运行完毕————————')
         return model
@@ -566,19 +614,19 @@ def Fit_Station(x_data, y_data, forest_type):
     RF_data = RF(x_data, y_data, 'fit_station')
     LCE_data = LCE(x_data, y_data, 'fit_station')
     Vote_data = Vote(x_data, y_data, 'fit_station')
-    # SVR_data = SVR(x_data, y_data, 'fit_station')
-    # Gauss_data = Gauss(x_data, y_data, 'fit_station')
-    # MLP_data = MLP(x_data, y_data, 'fit_station')
+    SVR_data = SVRR(x_data, y_data, 'fit_station')
+    Gauss_data = Gauss(x_data, y_data, 'fit_station')
+    MLP_data = MLP(x_data, y_data, 'fit_station')
     Index = ['type', 'R2', 'RMSE'] + forest_type
     y_ = ['Station', np.nan, np.nan] + y_data.flatten().tolist()
-    result_data = transposition(
-        [Index, Mean_data, Median_data, Weight_data, Mul_data, Bagging_data, AdaBoosting_data, GraBoosting_data,
-         Staking_data, RF_data, LCE_data, Vote_data, y_])
     # result_data = transposition(
     #     [Index, Mean_data, Median_data, Weight_data, Mul_data, Bagging_data, AdaBoosting_data, GraBoosting_data,
-    #      Staking_data, RF_data, LCE_data, Vote_data, SVR_data,Gauss_data,MLP_data,y_])
+    #      Staking_data, RF_data, LCE_data, Vote_data, y_])
+    result_data = transposition(
+        [Index, Mean_data, Median_data, Weight_data, Mul_data, Bagging_data, AdaBoosting_data, GraBoosting_data,
+         Staking_data, RF_data, LCE_data, Vote_data, SVR_data,Gauss_data,MLP_data,y_])
     result_data = pd.DataFrame(result_data)
-    result_data.to_excel(Outpath + os.sep + 'result.xlsx', header=None, index=False)
+    result_data.to_csv(Outpath + os.sep + 'result_grass.csv', header=None, index=False)
 
 
 def A_WriteArray(datalist, Name, var_list, n, width, height,local_geotrans, proj):
@@ -651,62 +699,61 @@ def get_Ensemble_model(x_data,y_data):
     GraBoosting_model = GradientBoosting(x_data, y_data,'fit_tif')
     Staking_model = Stacking(x_data, y_data,'fit_tif')
     RF_model = RF(x_data, y_data,'fit_tif')
-    # SVR_model = SVR(x_data, y_data, 'fit_tif')
+    # SVR_model = SVRR(x_data, y_data, 'fit_tif')
     # Gauss_model = Gauss(x_data, y_data, 'fit_tif')
-    MLP_model = MLP(x_data, y_data, 'fit_tif')
+    # MLP_model = MLP(x_data, y_data, 'fit_tif')
     # LCE_model = LCE(x_data, y_data,'fit_tif')
     # Vote_mdoel = Vote(x_data, y_data,'fit_tif')
-    # return {'Mul_model':Mul_model,'Bagging_model':Bagging_model,
-    #         'AdaBoosting_model':AdaBoosting_model,'GraBoosting_model':GraBoosting_model,
-    #         'Staking_model':Staking_model,'RF_model':RF_model,'SVR_model':SVR_model,'Gauss_model':Gauss_model,
-    #         'MLP_model':MLP_model,'LCE_model':LCE_model,'Vote_mdoel':Vote_mdoel}
+    # return {'SVR_model':SVR_model,'Gauss_model':Gauss_model,
+    #         'MLP_model':MLP_model}
     return {'Mul_model':Mul_model,'Bagging_model':Bagging_model,
             'AdaBoosting_model':AdaBoosting_model,'GraBoosting_model':GraBoosting_model,
             'Staking_model':Staking_model,'RF_model':RF_model}
 
+
 def Fit_Station_tif(Setnodata_datas, all_r2, n, width, height,Ensemble_models,local_geotrans, proj):
     logging.info('-------正在处理的是: Mean.Median---------')
-    # Setnodata_datas_array = np.array(Setnodata_datas).astype('float16')
-    # images_pixels_mean = np.nanmean(np.array(Setnodata_datas).astype('float16'), axis=0).astype('float16')
-    # images_pixels_median = np.nanmedian(np.array(Setnodata_datas).astype('float16'), axis=0).astype('float16')
-    # A_WriteArray(images_pixels_mean, 'Mean', years, n, width, height,local_geotrans, proj)
-    # A_WriteArray(images_pixels_median, 'Median', years, n, width, height,local_geotrans,proj)
-    # del images_pixels_mean
-    # del images_pixels_median
-    # del Setnodata_datas_array
-    # gc.collect()
-    # logging.info('-------Mean.Median 处理完毕---------')
-    #
-    # logging.info('-------正在处理的是: Weight---------')
-    # images_pixels_weight = np.array(
-    #     np.nansum(np.array([Setnodata_datas[i] * all_r2[i] for i in range(len(Setnodata_datas))]), axis=0) / np.nansum(
-    #         np.array(all_r2)).astype('float16'))
-    # A_WriteArray(images_pixels_weight, 'Weight', years, n, width, height,local_geotrans, proj)
-    # del images_pixels_weight
-    # gc.collect()
-    # logging.info('-------Weight 处理完毕---------')
-    #
-    images_pixels_x = []  # 用于存放所有年，每年五种数据mean的值，一年一个列表
-    for y in tqdm(range(height), desc='列数'):
-        for x in range(width):
-            images_pixels = []
-            for year in range(len(years)):
-                images_pixels.append(np.array([i[year][y][x] for i in Setnodata_datas]).astype('float16'))
-            images_pixels_x.append(np.array(images_pixels).astype('float16'))
+    Setnodata_datas_array = np.array(Setnodata_datas).astype('float16')
+    images_pixels_mean = np.nanmean(np.array(Setnodata_datas).astype('float16'), axis=0).astype('float16')
+    images_pixels_median = np.nanmedian(np.array(Setnodata_datas).astype('float16'), axis=0).astype('float16')
+    A_WriteArray(images_pixels_mean, 'Mean', years, n, width, height,local_geotrans, proj)
+    A_WriteArray(images_pixels_median, 'Median', years, n, width, height,local_geotrans,proj)
+    del images_pixels_mean
+    del images_pixels_median
+    del Setnodata_datas_array
+    gc.collect()
+    logging.info('-------Mean.Median 处理完毕---------')
 
-    Fit_tif(Ensemble_models['Mul_model'],images_pixels_x,'Multiply_Regression',n,width,height,local_geotrans, proj)
-    Fit_tif(Ensemble_models['Bagging_model'], images_pixels_x, 'Bagging',n,width,height,local_geotrans, proj)
-    Fit_tif(Ensemble_models['AdaBoosting_model'], images_pixels_x, 'AdaBoosting',n,width,height,local_geotrans, proj)
-    Fit_tif(Ensemble_models['GraBoosting_model'],images_pixels_x,'GradientBoosting',n,width,height,local_geotrans, proj)
-    Fit_tif(Ensemble_models['Staking_model'], images_pixels_x, 'Stacking',n,width,height,local_geotrans, proj)
-    Fit_tif(Ensemble_models['RF_model'], images_pixels_x, 'RF',n,width,height,local_geotrans, proj)
+    logging.info('-------正在处理的是: Weight---------')
+    images_pixels_weight = np.array(
+        np.nansum(np.array([Setnodata_datas[i] * all_r2[i] for i in range(len(Setnodata_datas))]), axis=0) / np.nansum(
+            np.array(all_r2)).astype('float16'))
+    A_WriteArray(images_pixels_weight, 'Weight', years, n, width, height,local_geotrans, proj)
+    del images_pixels_weight
+    gc.collect()
+    logging.info('-------Weight 处理完毕---------')
+
+    # images_pixels_x = []  # 用于存放所有年，每年五种数据mean的值，一年一个列表
+    # for y in tqdm(range(height), desc='列数'):
+    #     for x in range(width):
+    #         images_pixels = []
+    #         for year in range(len(years)):
+    #             images_pixels.append(np.array([i[year][y][x] for i in Setnodata_datas]).astype('float16'))
+    #         images_pixels_x.append(np.array(images_pixels).astype('float16'))
+
+    # Fit_tif(Ensemble_models['Mul_model'],images_pixels_x,'Multiply_Regression',n,width,height,local_geotrans, proj)
+    # Fit_tif(Ensemble_models['Bagging_model'], images_pixels_x, 'Bagging',n,width,height,local_geotrans, proj)
+    # Fit_tif(Ensemble_models['AdaBoosting_model'], images_pixels_x, 'AdaBoosting',n,width,height,local_geotrans, proj)
+    # Fit_tif(Ensemble_models['GraBoosting_model'],images_pixels_x,'GradientBoosting',n,width,height,local_geotrans, proj)
+    # Fit_tif(Ensemble_models['Staking_model'], images_pixels_x, 'Stacking',n,width,height,local_geotrans, proj)
+    # Fit_tif(Ensemble_models['RF_model'], images_pixels_x, 'RF',n,width,height,local_geotrans, proj)
     # Fit_tif(Ensemble_models['SVR_model'], images_pixels_x, 'SVR', n, width, height, local_geotrans, proj)
     # Fit_tif(Ensemble_models['Gauss_model'], images_pixels_x, 'Gauss', n, width, height, local_geotrans, proj)
     # Fit_tif(Ensemble_models['MLP_model'], images_pixels_x, 'MLP', n, width, height, local_geotrans, proj)
     # Fit_tif(Ensemble_models['LCE_model'], images_pixels_x, 'LCERegressor',n,local_geotrans, proj)
     # Fit_tif(Ensemble_models['Vote_mdoel'], images_pixels_x, 'Vote',n,local_geotrans, proj)
-    del images_pixels_x
-    del Setnodata_datas
+    # del images_pixels_x
+    # del Setnodata_datas
     gc.collect()
 
 def clip_total():
@@ -724,7 +771,7 @@ def clip_total():
             local_geotrans[3] = geotrans[3] + int(i * CropSize * (1 - RepetitionRate)) * geotrans[5]
             local_geotrans = tuple(local_geotrans)
             MuSyQ_datas, GLASS_datas, MODIS_datas, W_datas = [], [], [], []
-            if new_name <= 57:
+            if new_name <= 17:
                 new_name += 1
                 print(f'{new_name} continue')
                 continue
@@ -856,20 +903,31 @@ def clip_end_xy():
     new_name += 1
 
 if __name__ == "__main__":
-    vertify_npp = pd.read_excel(vertify_xlsx)
+    vertify_npp = pd.read_csv(vertify_xlsx)
     vertify_clear = vertify_npp[vertify_npp['Mean_GLOPE'] != 0]
+    vertify_clear = vertify_clear[vertify_clear['Mean_MODIS'] != 0]
+    vertify_clear = vertify_clear[vertify_clear['Mean_MuSyQ'] != 0]
+    vertify_clear = vertify_clear[vertify_clear['Mean_GLASS'] != 0]
+    vertify_clear = vertify_clear[vertify_clear['grid_code'] != 0]
+
+
+    vertify_clear = vertify_clear[vertify_clear['Mean_GLOPE'] != -9999]
     vertify_clear = vertify_clear[vertify_clear['Mean_MODIS'] != -9999]
-    vertify_clear = vertify_clear.groupby("Forest").mean()
-    forest_type = list(vertify_clear.index)
+    vertify_clear = vertify_clear[vertify_clear['Mean_MuSyQ'] != -9999]
+    vertify_clear = vertify_clear[vertify_clear['Mean_GLASS'] != -9999]
+    vertify_clear = vertify_clear[vertify_clear['grid_code'] != -9999]
+
+    # vertify_clear = vertify_clear.groupby("Formation").mean()
+    forest_type = list(vertify_clear.pointid)
     logging.info('\n')
     x_data_ = np.array(vertify_clear[['Mean_MODIS', 'Mean_MuSyQ', 'Mean_GLOPE', 'Mean_GLASS']])
-    y_data_ = np.array(vertify_clear['NPP__t_ha_']).ravel()
+    y_data_ = np.array(vertify_clear['grid_code']).ravel()
 
     all_r2 = Get_Model(x_data_, y_data_, forest_type)  # 返回所有模型的R2->列表
 
     Ensemble_models = get_Ensemble_model(x_data_,y_data_)
 
-    # Fit_Station(x_data_,y_data_,forest_type)   #站点数据的拟合->输出基本模型和集成分析的预测数据在站点上的R2，RMSE，以及预测值
+    Fit_Station(x_data_,y_data_,forest_type)   #站点数据的拟合->输出基本模型和集成分析的预测数据在站点上的R2，RMSE，以及预测值
 
     width,height,proj,geotrans,data = readTif_Alldata(Sample_tif)  # 首先读取文件，采用gdal.open的方法
 

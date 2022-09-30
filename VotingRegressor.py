@@ -42,3 +42,4 @@ plt.legend(loc="best")
 plt.title('Regressor predictions and their average')
 
 plt.show()
+print('')
